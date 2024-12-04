@@ -20,6 +20,10 @@ batch/
 DEBUG/
 debug/
 
+# all files and folders that start with DEBUG or debug
+DEBUG*
+debug*
+
 # Distribution / packaging
 .Python
 build/

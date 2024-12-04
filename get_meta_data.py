@@ -109,6 +109,12 @@ def make_edges_and_meta(path_out, ref_stats, key_info_all):
 
 def save_paper_author_dicts(paper2meta, dir_dict):
     paper2author = {p: [d["authors"][i]["name"] for i in range(len(d["authors"]))] for p, d in paper2meta.items()}
+    missing_authors = False
+    for paper, aus in paper2author.items():
+        if not aus: # Empty list is faulty in Python.
+            print(f"Warning: paper PMC={paper} authors not found.")
+            missing_authors = True
+    assert not missing_authors, "paper2author has some papers that we couldn't find authors, (ideally) need authors to proceed."
     paper2author_s = {p: set(aus) for p, aus in paper2author.items()}
     paper2last_author = {p: aus[-1] for p, aus in paper2author.items()}
     paper2first_author = {p: aus[0] for p, aus in paper2author.items()}

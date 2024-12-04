@@ -787,6 +787,7 @@ def _xml_parser(xml_path, article_types, article_year, ref_meta_tags):
                 tmp_fname = namae.find("given-names")  # there are a few cases where this tag is present, but no text (sole <given-names/>)
                 tmp_lname = namae.find("surname")
                 if tmp_fname is None or tmp_lname is None or tmp_fname.text is None or tmp_lname.text is None:  # incomplete name skipped
+                    print(f"DEBUG: PMC={pmcid}, an author is skipped because not both first and last names are found.")
                     continue
                 author_hashable = (tmp_fname.text, tmp_lname.text)
                 if au.find("aff") is None:
@@ -819,6 +820,9 @@ def _xml_parser(xml_path, article_types, article_year, ref_meta_tags):
             #     print(f'warning427 {key_info["uid"]}, below contrib Element is not author:')
             #     print(etree.tostring(au, pretty_print=True).decode())
 
+    if not key_info["authors"]:  # no authors found
+        print(f"DEBUG: PMC={pmcid}, no authors found.")
+
     # main text section (body); this is where we first start modifying the tree
     ps = article.findall("body//p")  # find all p Element in body Element
     # get only p that are at the topmost level, i.e., no more p in the ancestor
@@ -840,7 +844,7 @@ def _xml_parser(xml_path, article_types, article_year, ref_meta_tags):
     return key_info
 
 
-def parse_all_xml_files(path_in, path_out, journal_year_lookup, article_types=None):
+def parse_all_xml_files(path_in, path_out, journal_year_lookup, article_types=None, save_periodic=False):
     """This function uses _xml_parser() to do individual parsing.
     Extract both sentence and meta info from xml files.
     Filter out articles based on the extracted info from xml:
@@ -860,6 +864,8 @@ def parse_all_xml_files(path_in, path_out, journal_year_lookup, article_types=No
     ------
     - article_types (set of str):
         types of articles to mark for filtering; default to research and review
+    - save_periodic (bool): If True, save key_info_all periodically (every 20K papers).
+        Default to False, because saving is quite slow (minutes) and processing is quite fast (<30 min for 100K papers).
 
     Intermediary
     ------------
@@ -896,7 +902,7 @@ def parse_all_xml_files(path_in, path_out, journal_year_lookup, article_types=No
                 n_filtered += 1
                 break
         i += 1
-        if i % 2000 == 0:
+        if save_periodic and i % 20000 == 0:
             with open(os.path.join(path_out, fname_pkl), "wb") as f:
                 pickle.dump(key_info_all, f)
     with open(os.path.join(path_out, fname_pkl), "wb") as f:
