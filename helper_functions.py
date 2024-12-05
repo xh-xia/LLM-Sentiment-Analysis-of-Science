@@ -49,7 +49,7 @@ def pval_star(pval, star=False, show_insig=True, show_p=True):
             return f"{'p'*show_p}<0.0001"
 
 
-def calculate_stats(x, y, yerr):
+def calculate_stats(x, y, yerr, spearman=True):
     """Calculate several stats for the linear relationship:
     1) Weighted linear regression
         adjusted R^2, coef_arr, F-test score and pval
@@ -57,10 +57,21 @@ def calculate_stats(x, y, yerr):
             row: factor/predictor
             col: coef, t, p>|t|, CI_lower, CI_upper
     2) Spearman: size and pval
+
+    for tmp_fit, see:
+    https://www.statsmodels.org/stable/generated/statsmodels.regression.linear_model.RegressionResults.html
+    beta = tmp_fit.params  # intercept (beta0), beta1
+
+    Args:
+        yerr: Standard deviation of y.
+            weights = 1/yvar, yvar is variance of y, so yvar = yerr ** 2
     """
     stat_dict = dict()
     tmp_fit = sm.WLS(y, sm.add_constant(x, has_constant="add"), weights=1 / (yerr**2)).fit()
-    tmp_spear = stats.spearmanr(x, y)
+    if spearman:
+        tmp_spear = stats.spearmanr(x, y)
+        stat_dict["spearman"] = tmp_spear.correlation
+        stat_dict["spearmanp"] = tmp_spear.pvalue
 
     stat_dict["rsqr_a"] = tmp_fit.rsquared_adj
     stat_dict["fs"] = (np.round(tmp_fit.df_model).astype(int), np.round(tmp_fit.df_resid).astype(int))
@@ -69,19 +80,25 @@ def calculate_stats(x, y, yerr):
     stat_dict["coef_arr"] = np.array(
         [tmp_fit.params, tmp_fit.tvalues, tmp_fit.pvalues, tmp_fit.conf_int()[:, 0], tmp_fit.conf_int()[:, 1]]
     ).T
-    stat_dict["spearman"] = tmp_spear.correlation
-    stat_dict["spearmanp"] = tmp_spear.pvalue
+
+    stat_dict["yhat"] = tmp_fit.fittedvalues
+    # stat_dict["cov"] = tmp_fit.cov_params()
+    stat_dict["resid"] = tmp_fit.resid
+    stat_dict["df_model"] = tmp_fit.df_model  # k-1 (i.e., p)
+    stat_dict["df_resid"] = tmp_fit.df_resid  # N-k (k=p+1), p is num of regressor; +1 cuz constant.
     return stat_dict
 
 
 def get_list_from_stat_dict(stat_dict):
     comp0 = stat_dict["coef_arr"][1, 0]  # Slope.
+    comp0l = stat_dict["coef_arr"][1, 3]  # 95% confidence interval, lower.
+    comp0u = stat_dict["coef_arr"][1, 4]  # 95% confidence interval, upper.
     comp1 = stat_dict["rsqr_a"]
     comp2 = f"F({stat_dict['fs'][0]},{stat_dict['fs'][1]})={stat_dict['f']:.2f}"
     comp3 = pval_star(stat_dict["fp"], star=False, show_insig=True, show_p=False)
     comp4 = stat_dict["spearman"]
     comp5 = pval_star(stat_dict["spearmanp"], star=False, show_insig=True, show_p=False)
-    return [f"{comp0:.2f}", f"{comp1:.3f}", comp2, comp3, f"{comp4:.2f}", comp5]
+    return [f"{comp0:.2f}", f"[{comp0l:.2f},{comp0u:.2f}]", f"{comp1:.3f}", comp2, comp3, f"{comp4:.2f}", comp5]
 
 
 def print_stats(rmrs, grps, x_factor=None, x_lab=None, sent=-1, use_SEM=False, err_max=np.inf):
@@ -106,7 +123,7 @@ def print_stats(rmrs, grps, x_factor=None, x_lab=None, sent=-1, use_SEM=False, e
         m_ = (xerr <= err_max) & (yerr <= err_max)
         x, xerr, y, yerr, text = x[m_], xerr[m_], y[m_], yerr[m_], grps[m_]
         stat_dict = calculate_stats(x, y, yerr)
-        data.append([f"{SENT2LAB[sent]} Bias vs. Mean"] + get_list_from_stat_dict(stat_dict))
+        data.append([f'{SENT2LAB[sent].replace(" Sentiment", "")} Bias vs. Mean'] + get_list_from_stat_dict(stat_dict))
 
     if x_factor is not None:
         ####### mean, collab.
@@ -114,28 +131,28 @@ def print_stats(rmrs, grps, x_factor=None, x_lab=None, sent=-1, use_SEM=False, e
         m_ = yerr <= err_max
         x, xerr, y, yerr, text = x[m_], xerr[m_], y[m_], yerr[m_], grps[m_]
         stat_dict = calculate_stats(x, y, yerr)
-        data.append([f"{SENT2LAB[sent]} Mean (Collab) vs. {x_lab}"] + get_list_from_stat_dict(stat_dict))
+        data.append([f'{SENT2LAB[sent].replace(" Sentiment", "")} Mean (Collab) vs. {x_lab}'] + get_list_from_stat_dict(stat_dict))
         ####### mean, non-collab.
         x, xerr, y, yerr = x_factor, np.ones_like(x_factor), crit_cd2p_m, crit_cd2p_e
         m_ = yerr <= err_max
         x, xerr, y, yerr, text = x[m_], xerr[m_], y[m_], yerr[m_], grps[m_]
         stat_dict = calculate_stats(x, y, yerr)
-        data.append([f"{SENT2LAB[sent]} Mean (Non-Collab) vs. {x_lab}"] + get_list_from_stat_dict(stat_dict))
+        data.append([f'{SENT2LAB[sent].replace(" Sentiment", "")} Mean (Non-Collab) vs. {x_lab}'] + get_list_from_stat_dict(stat_dict))
         ####### mean, both collab and non-collab.
         x, xerr, y, yerr = x_factor, np.ones_like(x_factor), crit_mean, crit_err
         m_ = yerr <= err_max
         x, xerr, y, yerr, text = x[m_], xerr[m_], y[m_], yerr[m_], grps[m_]
         stat_dict = calculate_stats(x, y, yerr)
-        data.append([f"{SENT2LAB[sent]} Mean (All) vs. {x_lab}"] + get_list_from_stat_dict(stat_dict))
+        data.append([f'{SENT2LAB[sent].replace(" Sentiment", "")} Mean (All) vs. {x_lab}'] + get_list_from_stat_dict(stat_dict))
 
         ####### bias.
         x, xerr, y, yerr = x_factor, np.ones_like(x_factor), bias_m, bias_e
         m_ = yerr <= err_max
         x, xerr, y, yerr, text = x[m_], xerr[m_], y[m_], yerr[m_], grps[m_]
         stat_dict = calculate_stats(x, y, yerr)
-        data.append([f"{SENT2LAB[sent]} Bias vs. {x_lab}"] + get_list_from_stat_dict(stat_dict))
+        data.append([f'{SENT2LAB[sent].replace(" Sentiment", "")} Bias vs. {x_lab}'] + get_list_from_stat_dict(stat_dict))
 
-    columns = ["Type", "Slope", "Adjusted R-squared", "F-test Statistic", "F-test p-value"]
+    columns = ["Type", "Slope", "95% CI", "Adjusted R-squared", "F-test Statistic", "F-test p-value"]
     columns.extend(["Spearman Correlation", "Spearman p-value"])
     df = pd.DataFrame(data=data, columns=columns)
     # df.reset_index(drop=True, inplace=True)  # Remove index column.
@@ -143,26 +160,7 @@ def print_stats(rmrs, grps, x_factor=None, x_lab=None, sent=-1, use_SEM=False, e
 
 
 def calculate_WLS_CI(X, y, yerr):
-    # yerr is standard deviation of y
-    # weights = 1/yvar, yvar is variance of y, so yvar = yerr ** 2
-    tmp_fit = sm.WLS(y, sm.add_constant(X, has_constant="add"), weights=1 / (yerr**2)).fit()
-    # for tmp_fit, see:
-    # https://www.statsmodels.org/stable/generated/statsmodels.regression.linear_model.RegressionResults.html
-    # beta = tmp_fit.params  # intercept (beta0), beta1
-    slr_stats = dict()
-    slr_stats["rsquared_adj"] = tmp_fit.rsquared_adj
-    slr_stats["fvalue"] = tmp_fit.fvalue
-    slr_stats["f_pvalue"] = tmp_fit.f_pvalue
-    slr_stats["df_model"] = tmp_fit.df_model  # k-1 (i.e., p)
-    slr_stats["df_resid"] = tmp_fit.df_resid  # N-k (k=p+1), p is num of regressor; +1 cuz constant.
-    slr_stats["yhat"] = tmp_fit.fittedvalues
-    # slr_stats["cov"] = tmp_fit.cov_params()
-    slr_stats["resid"] = tmp_fit.resid
-    # coef_arr: row is factor/predictor; col is: coef, t, p>|t|, CI_lower, CI_upper
-    slr_stats["coef_arr"] = np.array(
-        [tmp_fit.params, tmp_fit.tvalues, tmp_fit.pvalues, tmp_fit.conf_int()[:, 0], tmp_fit.conf_int()[:, 1]]
-    ).T
-
+    slr_stats = calculate_stats(X, y, yerr, spearman=False)
     # Confidence interval (95%) for the (weighted) linear fit:
     n = len(y)
     s_err = np.sqrt(np.sum(slr_stats["resid"] ** 2) / (n - 2))  # standard deviation of the error (residuals)
@@ -220,13 +218,13 @@ def plot_scatter_and_fit(
             xcoor, ycoor = 0.05, 0.1
         else:
             xcoor, ycoor = 0.05 + 0.47 * int(color_ == "#F59448"), 0.95
-        fval = slr_stats["fvalue"]
-        f_pval = slr_stats["f_pvalue"]
+        fval = slr_stats["f"]
+        f_pval = slr_stats["fp"]
         slope = slr_stats["coef_arr"][1, 0]
         n_numer = np.round(slr_stats["df_model"]).astype(int)
         n_denom = np.round(slr_stats["df_resid"]).astype(int)
         txt_sig = rf"$F({n_numer},{n_denom})={fval:.2f}$  ${pval_star(f_pval)}$"
-        txt_effect = rf"$s={slope:.2f}$   ${'R_a'}^2={slr_stats['rsquared_adj']:.3f}$"
+        txt_effect = rf"$s={slope:.2f}$   ${'R_a'}^2={slr_stats['rsqr_a']:.3f}$"
         ax.text(xcoor, ycoor, txt_sig, color=color_, **styles_txt)
         ax.text(xcoor, ycoor - 0.04, txt_effect, color=color_, **styles_txt)
 
