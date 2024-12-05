@@ -1,4 +1,4 @@
-# LLM-Sentiment-Analysis-of-Science
+# Citation Sentiment Reflects Multiscale Sociocultural Norms
 Data used in the manuscript are available upon request from the corresponding author at dsb@seas.upenn.edu.
 
 Which script does what:</br>
