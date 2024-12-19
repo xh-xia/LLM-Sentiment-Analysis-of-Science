@@ -1,5 +1,4 @@
 import os
-import pickle
 from tqdm import tqdm
 import numpy as np
 import pandas as pd
@@ -7,7 +6,7 @@ import regex as re
 from country_list import countries_for_language
 
 from xml_parser import DASH
-from helper_functions import fuzz_check, reverse_dict_list, has_keyword_any
+from helper_functions import fuzz_check, reverse_dict_list, has_keyword_any, savePKL, loadPKL
 
 
 def get_country(affiliation, country_name2country_abbr, set_us_state, all_names_re, all_US_states_re):
@@ -139,10 +138,8 @@ def save_country_dicts(paper2meta, dir_out, print_fail=False):
     paper2last_author_country = {k: list(v) for k, v in paper2last_author_country.items()}
     paper2first_author_country = {k: list(v) for k, v in paper2first_author_country.items()}
 
-    with open(os.path.join(dir_out, "paper2last_author_country.pkl"), "wb") as f:
-        pickle.dump(paper2last_author_country, f)
-    with open(os.path.join(dir_out, "paper2first_author_country.pkl"), "wb") as f:
-        pickle.dump(paper2first_author_country, f)
+    savePKL(dir_out, "paper2last_author_country", paper2last_author_country)
+    savePKL(dir_out, "paper2first_author_country", paper2first_author_country)
 
 
 def save_country_measures(dir_6d, dir_dict, thres=50):
@@ -150,17 +147,11 @@ def save_country_measures(dir_6d, dir_dict, thres=50):
     thres (int):
         Num of citation pairs at distance 1 needed to consider a country (by last author affiliation countries)
     """
-    with open(os.path.join(dir_dict, "paper2last_author_country.pkl"), "rb") as f:
-        paper2last_author_country = pickle.load(f)
-    with open(os.path.join(dir_dict, "paper2last_author.pkl"), "rb") as f:
-        paper2last_author = pickle.load(f)
-    with open(os.path.join(dir_dict, "last_author2gender_info.pkl"), "rb") as f:
-        last_author2gender_info = pickle.load(f)
-
-
+    paper2last_author_country = loadPKL(dir_dict, "paper2last_author_country")
+    paper2last_author = loadPKL(dir_dict, "paper2last_author")
+    last_author2gender_info = loadPKL(dir_dict, "last_author2gender_info")
     # Select subset of countries based on citations.
-    with open(os.path.join(dir_dict, "cite2distance.pkl"), "rb") as f:
-        cite2distance = pickle.load(f)  # Collaboration distance.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
     last_author_country2paper = reverse_dict_list(paper2last_author_country)
     n_collab = {c: 0 for c in last_author_country2paper.keys()}
     for e, d in cite2distance.items():
@@ -171,7 +162,7 @@ def save_country_measures(dir_6d, dir_dict, thres=50):
     countries_subset = dict(sorted(n_collab.items(), key=lambda d: d[1], reverse=True))
     print(f"{len(countries_subset)} countries have {thres}+ post-hierarchy citations towards collaborators.")
 
-    # use country_list.countries_for_language library to get country names from 2-letter codes
+    # Use country_list.countries_for_language library to get country names from 2-letter codes.
     country_abbr2country_name = {k: {v} for k, v in dict(countries_for_language("en")).items()}
 
     country_abbr2country_name["US"].add("USA")
@@ -221,20 +212,17 @@ def save_country_measures(dir_6d, dir_dict, thres=50):
         for paper in last_author_country2paper[co]:
             last_author = paper2last_author[paper]
             if last_author in last_author2gender_info:
-                # Only assign gender to name that has 0.7+ accuracy.
-                if last_author2gender_info[last_author][1] >= 0.7:
+                # Only assign gender to name that has 0.7+ accuracy AND sample size >=20.
+                if last_author2gender_info[last_author][1] >= 0.7 and last_author2gender_info[last_author][2] >= 20:
                     country2men_ratio[co][0] += int(last_author2gender_info[last_author][0]=="man")
                     country2men_ratio[co][1] += 1
     
     # Calculate ratios.
     country2men_ratio = {co: val[0]/val[1] for co, val in country2men_ratio.items()}
 
-    with open(os.path.join(dir_dict, "country2power_distance.pkl"), "wb") as f:
-        pickle.dump(country2power_distance, f)
-    with open(os.path.join(dir_dict, "country2individualism.pkl"), "wb") as f:
-        pickle.dump(country2individualism, f)
-    with open(os.path.join(dir_dict, "country2men_ratio.pkl"), "wb") as f:
-        pickle.dump(country2men_ratio, f)
+    savePKL(dir_dict, "country2power_distance", country2power_distance)
+    savePKL(dir_dict, "country2individualism", country2individualism)
+    savePKL(dir_dict, "country2men_ratio", country2men_ratio)
 
 
 def save_department_dicts(paper2meta, path_dep, dir_out, print_fail=False):
@@ -287,20 +275,15 @@ def save_department_dicts(paper2meta, path_dep, dir_out, print_fail=False):
     paper2last_author_department = {p: list(s) for p, s in paper2last_author_department.items()}
     paper2first_author_department = {p: list(s) for p, s in paper2first_author_department.items()}
 
-    with open(os.path.join(dir_out, "paper2last_author_department_28_dep.pkl"), "wb") as f:
-        pickle.dump(paper2last_author_department, f)
-    with open(os.path.join(dir_out, "paper2first_author_department_28_dep.pkl"), "wb") as f:
-        pickle.dump(paper2first_author_department, f)
+    savePKL(dir_out, "paper2last_author_department_28_dep", paper2last_author_department)
+    savePKL(dir_out, "paper2first_author_department_28_dep", paper2first_author_department)
 
 
 def save_benchwork_count(dir_tmp, dir_batch, dir_dict):
     # We don't discard any department.
-    with open(os.path.join(dir_batch, "benchwork_text_row2response.pkl"), "rb") as f:
-        benchwork_text_row2response = pickle.load(f)
-    with open(os.path.join(dir_tmp, "benchwork_text_row2paper.pkl"), "rb") as f:
-        benchwork_text_row2paper = pickle.load(f)
-    with open(os.path.join(dir_tmp, "dep2_100papers.pkl"), "rb") as f:
-        dep2_100papers = pickle.load(f)
+    benchwork_text_row2response = loadPKL(dir_batch, "benchwork_text_row2response")
+    benchwork_text_row2paper = loadPKL(dir_tmp, "benchwork_text_row2paper")
+    dep2_100papers = loadPKL(dir_tmp, "dep2_100papers")
     department2benchwork = {dep: [0, 0] for dep in dep2_100papers}
     paper2response = {p: None for p in benchwork_text_row2paper.values()}
     paper_to_discard = set()
@@ -326,8 +309,7 @@ def save_benchwork_count(dir_tmp, dir_batch, dir_dict):
             if paper in paper2response:
                 department2benchwork[dep][0] += paper2response[paper]
                 department2benchwork[dep][1] += 1
-    with open(os.path.join(dir_dict, "department2benchwork.pkl"), "wb") as f:
-        pickle.dump(department2benchwork, f)
+    savePKL(dir_dict, "department2benchwork", department2benchwork)
 
 
 def get_department_brilliance(dir_brilliance, departments_subset):
@@ -377,21 +359,15 @@ def save_department_measures(dir_brilliance, dir_dict, thres=50):
     """
     This function involves three thresholds:
         thres (int): Number of post-hierarchy citations towards collaborators.
-        Sample size threshold for brilliance: >=20.
+        Sample size threshold for brilliance and gender: >=20.
         Accuracy threshold for gender: >=70%. 
     """
-    with open(os.path.join(dir_dict, "paper2meta.pkl"), "rb") as f:
-        paper2meta = pickle.load(f)
-    with open(os.path.join(dir_dict, "paper2last_author_department_28_dep.pkl"), "rb") as f:
-        paper2last_author_department = pickle.load(f)
-    with open(os.path.join(dir_dict, "paper2last_author.pkl"), "rb") as f:
-        paper2last_author = pickle.load(f)
-    with open(os.path.join(dir_dict, "last_author2gender_info.pkl"), "rb") as f:
-        last_author2gender_info = pickle.load(f)  # val: ["man"/"woman", accuracy, sample size]
-    with open(os.path.join(dir_dict, "cite2distance.pkl"), "rb") as f:
-        cite2distance = pickle.load(f)  # Collaboration distance.
-    with open(os.path.join(dir_dict, "department2benchwork.pkl"), "rb") as f:
-        department2benchwork = pickle.load(f)
+    paper2meta = loadPKL(dir_dict, "paper2meta")
+    paper2last_author_department = loadPKL(dir_dict, "paper2last_author_department_28_dep")
+    paper2last_author = loadPKL(dir_dict, "paper2last_author")
+    last_author2gender_info = loadPKL(dir_dict, "last_author2gender_info")  # val: ["man"/"woman", accuracy, sample size]
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
+    department2benchwork = loadPKL(dir_dict, "department2benchwork")
 
     # Select subset of departments based on citations.
     last_author_department2paper = reverse_dict_list(paper2last_author_department)
@@ -430,8 +406,8 @@ def save_department_measures(dir_brilliance, dir_dict, thres=50):
                 raise Exception(f"Unknown article type: {t}.")
             last_author = paper2last_author[paper]
             if last_author in last_author2gender_info:
-                # Only assign gender to name that has 0.7+ accuracy.
-                if last_author2gender_info[last_author][1] >= 0.7:
+                # Only assign gender to name that has 0.7+ accuracy AND sample size >=20.
+                if last_author2gender_info[last_author][1] >= 0.7 and last_author2gender_info[last_author][2] >= 20:
                     department2men_ratio[dep][0] += int(last_author2gender_info[last_author][0]=="man")
                     department2men_ratio[dep][1] += 1
     
@@ -440,12 +416,8 @@ def save_department_measures(dir_brilliance, dir_dict, thres=50):
     department2synthesis = {dep: val[0]/val[1] for dep, val in department2synthesis.items()}
     department2men_ratio = {dep: val[0]/val[1] for dep, val in department2men_ratio.items()}
 
-    with open(os.path.join(dir_dict, "department2synthesis.pkl"), "wb") as f:
-        pickle.dump(department2synthesis, f)
-    with open(os.path.join(dir_dict, "department2benchwork.pkl"), "wb") as f:
-        pickle.dump(department2benchwork, f)
-    with open(os.path.join(dir_dict, "department2men_ratio.pkl"), "wb") as f:
-        pickle.dump(department2men_ratio, f)
-    with open(os.path.join(dir_dict, "department2brilliance.pkl"), "wb") as f:
-        pickle.dump(department2brilliance, f)
+    savePKL(dir_dict, "department2synthesis", department2synthesis)
+    savePKL(dir_dict, "department2benchwork", department2benchwork)
+    savePKL(dir_dict, "department2men_ratio", department2men_ratio)
+    savePKL(dir_dict, "department2brilliance", department2brilliance)
 

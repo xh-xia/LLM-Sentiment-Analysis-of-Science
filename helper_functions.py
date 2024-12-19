@@ -1,4 +1,5 @@
 import os
+import pickle
 import numpy as np
 import networkx as nx
 from scipy import stats
@@ -9,10 +10,22 @@ import pandas as pd  # For table printing.
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
+
 SENT2LAB = {1: "Favorable Sentiment", 0: "Neutral Sentiment", -1: "Critical Sentiment"}
 SENT2IDX = {1: 0, 0: 1, -1: 2}
 SENT_COLORS = ["#504DB2", "#414042", "#B2504D"]  # POS, NEU, NEG
 COSTRA_COLORS = ["#2CBEC6", "#F59448"]  # collaborators, non-collaborators
+
+
+def savePKL(dir_out, fname, file):
+    with open(os.path.join(dir_out, f"{fname}.pkl"), "wb") as f:
+        pickle.dump(file, f)
+
+
+def loadPKL(dir_in, fname):
+    with open(os.path.join(dir_in, f"{fname}.pkl"), "rb") as f:
+        file = pickle.load(f)
+    return file
 
 
 def fuzz_check(text_1, text_2):

@@ -1,18 +1,14 @@
 import numpy as np
 import os
-import pickle
 
 from cite_coauthor_functions import find_y_rand_samp
-from helper_functions import reverse_dict_list, reverse_dict_val
+from helper_functions import reverse_dict_list, reverse_dict_val, savePKL, loadPKL
 
 
 def prepare_collab_groups(dir_dict, dir_npy, n_bs=1000):
-    with open(os.path.join(dir_dict, "cite2sent_2.pkl"), "rb") as f:
-        cite2sent_emp = pickle.load(f)  # Each citation pair has just 1 sentiment; empirical.
-    with open(os.path.join(dir_dict, "cite2sent_null_param.pkl"), "rb") as f:
-        cite2sent_nul = pickle.load(f)  # Null model sentiment.
-    with open(os.path.join(dir_dict, "cite2distance.pkl"), "rb") as f:
-        cite2distance = pickle.load(f)  # Collaboration distance.
+    cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
+    cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
 
     n1 = 4  # 4 distance types; [1, inf), [1], [2, inf), [0].
     n2 = 3  # 3 sentiment.
@@ -38,12 +34,9 @@ def prepare_collab_distance(dir_dict, dir_npy, dist_max=6, n_bs=1000):
         dist_max (int): Max collab distance to plot.
         n_bs (int): Number of bootstrap resamples. Defaults to 1000.
     """
-    with open(os.path.join(dir_dict, "cite2sent_2.pkl"), "rb") as f:
-        cite2sent_emp = pickle.load(f)  # Each citation pair has just 1 sentiment; empirical.
-    with open(os.path.join(dir_dict, "cite2sent_null_param.pkl"), "rb") as f:
-        cite2sent_nul = pickle.load(f)  # Null model parameters.
-    with open(os.path.join(dir_dict, "cite2distance.pkl"), "rb") as f:
-        cite2distance = pickle.load(f)  # Collaboration distance.
+    cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
+    cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
 
     # row: Distance 0,1,2,...,dist_max; col: 3 sentiment; dep: n_bs data points.
     ratio_mat_rel = np.zeros((dist_max + 1, 3, n_bs))
@@ -62,12 +55,9 @@ def prepare_t_collab(dir_dict, dir_npy, year_ranges=None, n_bs=1000):
     Args:
         year_ranges (list of tuples): t2collab range for each bin.
     """
-    with open(os.path.join(dir_dict, "cite2sent_2.pkl"), "rb") as f:
-        cite2sent_emp = pickle.load(f)  # Each citation pair has just 1 sentiment; empirical.
-    with open(os.path.join(dir_dict, "cite2sent_null_param.pkl"), "rb") as f:
-        cite2sent_nul = pickle.load(f)  # Null model parameters.
-    with open(os.path.join(dir_dict, "cite2t_collab.pkl"), "rb") as f:
-        cite2t_collab = pickle.load(f)  # Time before first collab in data.
+    cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
+    cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
+    cite2t_collab = loadPKL(dir_dict, "cite2t_collab")  # Time before first collab in data.
 
     if year_ranges is None:
         year_ranges = [(-4, -3), (-2, -1), (0, 0), (1, 2), (3, 4), (5, 6)]
@@ -106,16 +96,11 @@ def prepare_hindex(dir_dict, dir_npy, binW=30, n_bs=1000):
     Args:
         binW (int): Bin width on either side of 0 h-Index diff. Defaults to 30.
     """
-    with open(os.path.join(dir_dict, "cite2sent_2.pkl"), "rb") as f:
-        cite2sent_emp = pickle.load(f)  # Each citation pair has just 1 sentiment; empirical.
-    with open(os.path.join(dir_dict, "cite2sent_null_param.pkl"), "rb") as f:
-        cite2sent_nul = pickle.load(f)  # Null model parameters.
-    with open(os.path.join(dir_dict, "cite2distance.pkl"), "rb") as f:
-        cite2distance = pickle.load(f)  # Collaboration distance.
-    with open(os.path.join(dir_dict, "paper2last_author.pkl"), "rb") as f:
-        paper2last_author = pickle.load(f)  # Last author name of each paper.
-    with open(os.path.join(dir_dict, "last_author2hIndex.pkl"), "rb") as f:
-        last_author2hIndex = pickle.load(f)  # Last author hIndex.
+    cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
+    cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
+    paper2last_author = loadPKL(dir_dict, "paper2last_author")  # Last author name of each paper.
+    last_author2hIndex = loadPKL(dir_dict, "last_author2hIndex")  # Last author hIndex.
 
     def _is_hIndex_in_range(paper_i, paper_j, hidx_low, hidx_high, right_inclusive=False):
         author_i = paper2last_author[paper_i]
@@ -159,14 +144,10 @@ def prepare_hindex(dir_dict, dir_npy, binW=30, n_bs=1000):
 
 
 def prepare_country_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
-    with open(os.path.join(dir_dict, "cite2sent_2.pkl"), "rb") as f:
-        cite2sent_emp = pickle.load(f)  # Each citation pair has just 1 sentiment; empirical.
-    with open(os.path.join(dir_dict, "cite2sent_null_param.pkl"), "rb") as f:
-        cite2sent_nul = pickle.load(f)  # Null model sentiment.
-    with open(os.path.join(dir_dict, "cite2distance.pkl"), "rb") as f:
-        cite2distance = pickle.load(f)  # Collaboration distance.
-    with open(os.path.join(dir_dict, "paper2last_author_country.pkl"), "rb") as f:
-        paper2last_author_country = pickle.load(f)  # Last author countries for each paper.
+    cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
+    cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
+    paper2last_author_country = loadPKL(dir_dict, "paper2last_author_country")  # Last author countries for each paper.
     last_author_country2paper = reverse_dict_list(paper2last_author_country)
     n_collab = {c: 0 for c in last_author_country2paper.keys()}
     for e, sent in cite2sent_emp.items():
@@ -206,14 +187,10 @@ def prepare_country_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
 
 
 def prepare_department_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
-    with open(os.path.join(dir_dict, "cite2sent_2.pkl"), "rb") as f:
-        cite2sent_emp = pickle.load(f)  # Each citation pair has just 1 sentiment; empirical.
-    with open(os.path.join(dir_dict, "cite2sent_null_param.pkl"), "rb") as f:
-        cite2sent_nul = pickle.load(f)  # Null model sentiment.
-    with open(os.path.join(dir_dict, "cite2distance.pkl"), "rb") as f:
-        cite2distance = pickle.load(f)  # Collaboration distance.
-    with open(os.path.join(dir_dict, "paper2last_author_department_28_dep.pkl"), "rb") as f:
-        paper2last_author_department = pickle.load(f)  # Last author departments for each paper.
+    cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
+    cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
+    paper2last_author_department = loadPKL(dir_dict, "paper2last_author_department_28_dep")  # Last author departments for each paper.
     last_author_department2paper = reverse_dict_list(paper2last_author_department)
     n_collab = {c: 0 for c in last_author_department2paper.keys()}
     for e, sent in cite2sent_emp.items():
@@ -255,19 +232,14 @@ def prepare_department_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
 
 
 def prepare_gender_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
-    with open(os.path.join(dir_dict, "cite2sent_2.pkl"), "rb") as f:
-        cite2sent_emp = pickle.load(f)  # Each citation pair has just 1 sentiment; empirical.
-    with open(os.path.join(dir_dict, "cite2sent_null_param.pkl"), "rb") as f:
-        cite2sent_nul = pickle.load(f)  # Null model sentiment.
-    with open(os.path.join(dir_dict, "cite2distance.pkl"), "rb") as f:
-        cite2distance = pickle.load(f)  # Collaboration distance.
-    with open(os.path.join(dir_dict, "paper2last_author.pkl"), "rb") as f:
-        paper2last_author = pickle.load(f)
-    with open(os.path.join(dir_dict, "last_author2gender_info.pkl"), "rb") as f:
-        last_author2gender_info = pickle.load(f)
+    cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
+    cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
+    paper2last_author = loadPKL(dir_dict, "paper2last_author")
+    last_author2gender_info = loadPKL(dir_dict, "last_author2gender_info")
 
     paper2last_author_gender = {p: last_author2gender_info[au] for p, au in paper2last_author.items()}
-    paper2last_author_gender = {p: g[0] if g[1] >= 0.7 else None for p, g in paper2last_author_gender.items()}
+    paper2last_author_gender = {p: g[0] if (g[1] >= 0.7 and g[2] >= 20) else None for p, g in paper2last_author_gender.items()}
 
     last_author_gender2paper = reverse_dict_val(paper2last_author_gender)
     last_author_gender2paper.pop(None)  # None is ones didn't pass the filter earlier.
@@ -310,10 +282,8 @@ def prepare_gender_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
 
 
 def get_sample_size_department(dir_dict, thres=100):
-    with open(os.path.join(dir_dict, "cite2distance.pkl"), "rb") as f:
-        cite2distance = pickle.load(f)  # Collaboration distance.
-    with open(os.path.join(dir_dict, "paper2last_author_department_28_dep.pkl"), "rb") as f:
-        paper2last_author_department = pickle.load(f)  # Last author departments for each paper.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
+    paper2last_author_department = loadPKL(dir_dict, "paper2last_author_department_28_dep")  # Last author departments for each paper.
     last_author_department2paper = reverse_dict_list(paper2last_author_department)
     n_collab = {c: 0 for c in last_author_department2paper.keys()}
     for e, d in cite2distance.items():
@@ -326,10 +296,8 @@ def get_sample_size_department(dir_dict, thres=100):
 
 
 def get_sample_size_country(dir_dict, thres=100):
-    with open(os.path.join(dir_dict, "cite2distance.pkl"), "rb") as f:
-        cite2distance = pickle.load(f)  # Collaboration distance.
-    with open(os.path.join(dir_dict, "paper2last_author_country.pkl"), "rb") as f:
-        paper2last_author_country = pickle.load(f)  # Last author departments for each paper.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
+    paper2last_author_country = loadPKL(dir_dict, "paper2last_author_country")# Last author departments for each paper.
     last_author_country2paper = reverse_dict_list(paper2last_author_country)
     n_collab = {c: 0 for c in last_author_country2paper.keys()}
     for e, d in cite2distance.items():

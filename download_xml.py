@@ -11,13 +11,13 @@ import json
 
 def get_ftp_path(csv_in):
     """
-    process oa_file_list_filtered.csv file in <csv_in> (e.g., /data),
-    output a list of its first column (i.e., relative ftp path)
+    Process oa_file_list_filtered.csv file in <csv_in> (e.g., /data),
+    output a list of its first column (i.e., relative ftp path).
     """
     kwargs = dict(encoding="UTF-8", newline="")
     ftp_path_dict = dict()
     for file in os.listdir(csv_in):
-        if file.endswith(".csv"):
+        if file.endswith(".csv") and file.startswith("oa_file_list"):
             with open(os.path.join(csv_in, file), mode="r", **kwargs) as file_in:
                 spamreader = csv.reader(file_in)
                 next(spamreader)  # skip header
@@ -26,7 +26,7 @@ def get_ftp_path(csv_in):
                     ftp_path_dict[pmcid] = row[0]  # first col, which is ftp path
                     # e.g., "oa_package/72/19/PMC1305130.tar.gz"
                     if not row[0].endswith(".tar.gz"):
-                        raise Exception(f"ftp path {row[0]} in csv {file} is not a tgz file")
+                        raise Exception(f"ftp path {row[0]} in csv {file} is not a tgz file.")
 
     return ftp_path_dict
 
@@ -35,10 +35,9 @@ def extract_tgz2(tgz_path, content_out, xml_records):
     """this is NOT a general purpose extraction function
     this one uses 2nd gen xml_records (which uses pmcid (number only, but in str format) as the key)
     if there are 2+ xml files, pick the one that is .nxml first, and also pick the first one
-    Args
-    ----
-    - tgz_path (str): path of the tgz file we have locally
-    - content_out (str): dir (folder) of the extracted files
+    Args:
+        - tgz_path (str): path of the tgz file we have locally
+        - content_out (str): dir (folder) of the extracted files
     """
     pmcid = os.path.basename(tgz_path).split(".")[0][3:]
     try:
@@ -84,14 +83,13 @@ def download_tgz_files(csv_in, xml_out):
     doesn't exist when I went to the ftp server on browser,
     so there might be an error about it not being a gzip file
 
-    output
-    ------
-    - xml_records (nested dict): key is pmcid in ftp_path_dict (only numbers, no "PMC" letters);
-        if we have the key, we tried to download it (check "issues" to see the results)
-        val is a dict:
-        - "ftp_path": ftp_path of ftp_path_dict
-        - "PMCID": pmcid in ftp_path of ftp_path_dict
-        - "issues": descriptive string; empty if no issues
+    Output:
+        - xml_records (nested dict): key is pmcid in ftp_path_dict (only numbers, no "PMC" letters);
+            if we have the key, we tried to download it (check "issues" to see the results)
+            val is a dict:
+            - "ftp_path": ftp_path of ftp_path_dict
+            - "PMCID": pmcid in ftp_path of ftp_path_dict
+            - "issues": descriptive string; empty if no issues
     """
     temp = os.listdir(xml_out)
 

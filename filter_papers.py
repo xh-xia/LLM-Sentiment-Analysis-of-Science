@@ -1,13 +1,23 @@
 import os
-import pickle
 import csv
 import re
 import pandas as pd
+from tqdm import tqdm
+
+from helper_functions import savePKL, loadPKL
 
 
-def save_journal_meta(dir_in, dir_out):
-    df = pd.read_csv(os.path.join(dir_in, "JCR_JournalResults_05_2024.csv"), on_bad_lines="skip", header=2)
-    df = df.drop([305, 306, 307, 308])  # 305 is one whose 2022 JIF is "<0.1"
+def save_jour2meta(dir_in, dir_out, fname_JCR, jif_thres=3):
+    df = pd.read_csv(os.path.join(dir_in, f"{fname_JCR}.csv"), on_bad_lines="skip", header=2)
+    # Keep only JIF >= jif_thres.
+    df.loc[df["2022 JIF"] == "<0.1", "2022 JIF"] = 0
+    df["2022 JIF"] = df["2022 JIF"].apply(pd.to_numeric)
+    df = df.loc[df.index[df["2022 JIF"] >= jif_thres]]
+    # Clean and then turn into numeric.
+    df["Total Citations"] = df["Total Citations"].apply(lambda x: x.replace(",", ""))
+    df["% of OA Gold"] = df["% of OA Gold"].apply(lambda x: x.replace("%", ""))
+    df[["Total Citations", "% of OA Gold"]] = df[["Total Citations", "% of OA Gold"]].apply(pd.to_numeric)
+
     topJournals_tits = []
     topJournals_abbr = []
     topJournals_issn = []
@@ -15,13 +25,13 @@ def save_journal_meta(dir_in, dir_out):
     issn2data = dict()
     essn2data = dict()
 
-    for _, row in df[(pd.to_numeric(df["2022 JIF"]) >= 3)].iterrows():
+    for _, row in df.iterrows():
         topJournals_tits.append(row["Journal name"].casefold())
         topJournals_abbr.append(row["JCR Abbreviation"].casefold())
         td = dict()
-        td["tot_cite"] = pd.to_numeric(row["Total Citations"].replace(",", ""))  # 2022
-        td["JIF2022"] = pd.to_numeric(row["2022 JIF"])
-        td["OAGoldPercent"] = pd.to_numeric(row["% of OA Gold"].replace("%", ""))  # 2022; AKA "% OF CITABLE OA"
+        td["tot_cite"] = row["Total Citations"]  # 2022
+        td["JIF2022"] = row["2022 JIF"]
+        td["OAGoldPercent"] = row["% of OA Gold"]  # 2022; AKA "% OF CITABLE OA"
         if pd.isna(row["ISSN"]):
             topJournals_issn.append(None)
         else:
@@ -96,39 +106,13 @@ def save_journal_meta(dir_in, dir_out):
             else:
                 raise Exception("Neither Print nor Online ISSN is found.")
 
-    with open(os.path.join(dir_out, "jour2meta.pkl"), "wb") as f:
-        pickle.dump(founD, f)
+    # MedAbbr2meta = dict()
+    # for k, v in founD.items():
+    #     MedAbbr = v["MedAbbr"]
+    #     assert MedAbbr not in MedAbbr2meta, f"Duplicate MedAbbr found for journal={MedAbbr}."
+    #     MedAbbr2meta[MedAbbr] = v
 
-
-def make_year_range_list():
-    # reason for 1998 see:
-    # [2018] Characterizing in-text citations in scientific articles: A large-scale analysis
-    return [1998, 2023]
-
-
-def make_journal_list():
-    """the str in the list is "MedAbbr" in J_Medline.txt, which contains all journals PMC has
-    (total 188, since 1 PMC didn't have, it's 187)
-    neuroscience:
-    WoS neurosciences journals (JIF>=3) + 3 more neuroscience journals:
-        Epilepsia                   2022 JIF = 5.6  (obtained from WoS)
-        NeuroImage: Clinical        2022 JIF = 4.2  (obtained from WoS)
-        Nature Reviews Neurology    2022 JIF = 38.1 (obtained from WoS)
-    """
-    # some top ones
-    journal_list = ["Nat Neurosci", "Neuron", "Brain", "J Neurosci", "Neuroimage"]
-    journal_list += ["Nat Rev Neurosci", "Cereb Cortex", "Ann Neurol", "Hum Brain Mapp", "Epilepsia"]
-    journal_list += ["Clin Neurophysiol", "Neurosci Biobehav Rev", "Neuropsychopharmacology"]
-    journal_list += ["Neuroimage Clin", "Neurobiol Aging", "Trends Neurosci", "Nat Rev Neurol"]
-    journal_list += ["Brain Stimul", "Front Neurosci", "Front Neurol", "Cortex"]
-
-    # JIF >=3.5
-    journal_list += ['Behav Brain Sci', 'Mol Cell Neurosci', 'J Neurodev Disord', 'Acta Neuropathol Commun', 'Mol Neurobiol', 'Acta Neuropathol', 'Mol Brain', 'Behav Brain Funct', 'Rev Neurosci', 'ACS Chem Neurosci', 'J Physiol', 'Neurochem Int', 'J Neurol Sci', 'Int J Tryptophan Res', 'Neural Regen Res', 'J Neural Eng', 'Psychoneuroendocrinology', 'Neurosci Bull', 'Cell Mol Neurobiol', 'Curr Opin Behav Sci', 'Front Aging Neurosci', 'Neurobiol Dis', 'Front Neuroendocrinol', 'Curr Neuropharmacol', 'Dialogues Clin Neurosci', 'J Peripher Nerv Syst', 'Neuroscientist', 'Eur Neuropsychopharmacol', 'Int J Neuropsychopharmacol', 'Cogn Neurodyn', 'Neural Netw', 'Neuropsychol Rev', 'Pharmacol Biochem Behav', 'Metab Brain Dis', 'Neurosci Insights', 'IEEE Trans Cogn Dev Syst', 'J Psychopharmacol', 'Nat Aging', 'Front Mol Neurosci', 'Cognit Comput', 'Brain Res Bull', 'Glia', 'Cephalalgia', 'Bipolar Disord', 'Neurophotonics', 'Front Neuroinform', 'J Cereb Blood Flow Metab', 'Sleep', 'Psychophysiology', 'J Parkinsons Dis', 'J Alzheimers Dis', 'Neural Dev', 'Mol Autism', 'Brain Behav Immun', 'J Neuroinflammation', 'Ann Clin Transl Neurol', 'Front Integr Neurosci', 'Neurobiol Stress', 'Transl Stroke Res', 'Neurol Neuroimmunol Neuroinflamm', 'Curr Neurol Neurosci Rep', 'J Pain', 'Network', 'Brain Pathol', 'Psychiatry Clin Neurosci', 'Front Neural Circuits', 'Neurogastroenterol Motil', 'Mult Scler', 'Sleep Med Rev', 'Eur J Neurol', 'Annu Rev Vis Sci', 'NPJ Parkinsons Dis', 'Curr Opin Neurol', 'NPJ Sci Learn', 'Nutr Neurosci', 'Neurochem Res', 'J Pineal Res', 'J Neurotrauma', 'Front Synaptic Neurosci', 'Dev Cogn Neurosci', 'J Neuroeng Rehabil', 'Annu Rev Neurosci', 'J Neurosci Res', 'Chem Senses', 'Neuroendocrinology', 'Fluids Barriers CNS', 'Acta Neuropsychiatr', 'Alzheimers Dement (N Y)', 'Clin Auton Res', 'Cogn Syst Res', 'Prog Neuropsychopharmacol Biol Psychiatry', 'Purinergic Signal', 'Exp Neurol', 'Front Cell Neurosci', 'Brain Commun', 'J Psychiatry Neurosci', 'Curr Opin Neurobiol', 'J Neurochem', 'J Neuroimmune Pharmacol', 'Prog Neurobiol', 'Transl Neurodegener', 'J Sleep Res', 'Trends Cogn Sci', 'Alzheimers Res Ther', 'Biol Psychiatry Cogn Neurosci Neuroimaging', 'Cerebellum', 'J Headache Pain', 'ASN Neuro', 'Neuropathol Appl Neurobiol', 'Soc Cogn Affect Neurosci', 'Alzheimers Dement (Amst)', 'Neurotox Res', 'Hippocampus', 'Biol Psychiatry', 'Mol Psychiatry', 'Mol Neurodegener', 'Neuromolecular Med', 'Netw Neurosci', 'Pain Rep', 'Eur J Pain', 'Neurotherapeutics', 'Nat Hum Behav', 'Pain', 'Neuropharmacology', 'CNS Neurosci Ther']
-
-    # 3<= JIF <3.5
-    journal_list += ['J Cogn Neurosci', 'Front Neurorobot', 'eNeuro', 'J Neurovirol', 'J Mol Neurosci', 'J Neuropathol Exp Neurol', 'Neural Plast', 'Dev Neurobiol', 'Seizure', 'Neuroinformatics', 'Brain Behav', 'Neurotoxicology', 'Front Syst Neurosci', 'CNS Neurol Disord Drug Targets', 'Mol Pain', 'Neurodegener Dis', 'Muscle Nerve', 'Front Comput Neurosci', 'Trends Neurosci Educ', 'Brain Struct Funct', 'Neurophysiol Clin', 'Brain Sci', 'Neurobiol Lang (Camb)', 'Neuroscience', 'Neurol Sci', 'Epilepsia Open', 'Nat Sci Sleep', 'Neuropsychobiology', 'J Neural Transm (Vienna)', 'Int J Psychophysiol', 'Brain Connect', 'J Neuroimmunol', 'Eur J Neurosci', 'Clocks Sleep', 'J Huntingtons Dis', 'J Neuromuscul Dis', 'J Neuroendocrinol', 'Psychopharmacology (Berl)', 'Clin Psychopharmacol Neurosci', 'J Neurosci Methods', 'J Alzheimers Dis Rep']
-
-    return journal_list
+    savePKL(dir_out, "jour2meta", founD)
 
 
 def init_stats_dict():
@@ -177,8 +161,6 @@ def filter_file_list(year_range, journal_set, dir_in=None, dir_out=None):
     """
     fname_csv = "oa_file_list.csv"
     fname_csv_filtered = "oa_file_list_filtered.csv"
-    fname_pkl = "stats_dict.pkl"
-    fname_pkl_filtered = "stats_dict_filtered.pkl"
 
     fname_csv = os.path.join(dir_in, fname_csv)
     fname_csv_filtered = os.path.join(dir_out, fname_csv_filtered)
@@ -187,10 +169,8 @@ def filter_file_list(year_range, journal_set, dir_in=None, dir_out=None):
     # filters happening here
     stats_dict, stats_dict_filtered = _filelist_filter(fname_csv, fname_csv_filtered, year_range, journal_set)
     # save both dict files
-    with open(os.path.join(dir_out, fname_pkl), "wb") as f:
-        pickle.dump(stats_dict, f)
-    with open(os.path.join(dir_out, fname_pkl_filtered), "wb") as f:
-        pickle.dump(stats_dict_filtered, f)
+    savePKL(dir_out, "stats_dict", stats_dict)
+    savePKL(dir_out, "stats_dict_filtered", stats_dict_filtered)
 
     return stats_dict, stats_dict_filtered
 
@@ -228,7 +208,7 @@ def _filelist_filter(path_in, path_out, year_range, journal_set):
         with open(path_in, mode="r", **kwargs) as file_in:
             spamreader = csv.reader(file_in)
             spamwriter.writerow(next(spamreader))  # read and write header
-            for row in spamreader:
+            for row in tqdm(spamreader):
                 _csv_filter(row, stats_dict, year_range=None, journal_set=None)
                 if _csv_filter(row, stats_dict_filtered, year_range, journal_set):
                     spamwriter.writerow(row)
@@ -248,7 +228,7 @@ def _csv_filter(row, stats_dict, year_range=None, journal_set=None):
     - year_range (list; len=2):
         for "comm" subset, earliest year is 2003
         for all OA subset, year range is [1781, 2024]
-    - journal_set (list):
+    - journal_set (arr-like):
         journals to include
 
     fields
@@ -264,7 +244,7 @@ def _csv_filter(row, stats_dict, year_range=None, journal_set=None):
     """
     stats_dict["total"] += 1
     # only need journal and year, so group only these two, but temp.group(0) is the full cell
-    temp = re.search(r"(.+)\. ([0-9]{4})[ ;].*", row[1])
+    temp = re.search(r"(.+)\. 0?([0-9]{4})[ ;].*", row[1])
     if temp:  # has journal has year
         journal = temp.group(1)
         year = int(temp.group(2))
@@ -289,9 +269,9 @@ def _csv_filter(row, stats_dict, year_range=None, journal_set=None):
     elif re.search(r"(.+)\.(?! ).+", row[1]):  # no year but has journal
         stats_dict["no_year"] += 1
         return False
-    elif re.search(r"^ ([0-9]{4})[ ;].*", row[1]):  # no journal but has year
+    elif re.search(r"^ 0?([0-9]{4})[ ;].*", row[1]):  # no journal but has year
         stats_dict["no_journal"] += 1
-        year = int(re.search(r"^ ([0-9]{4})[ ;].*", row[1]).group(1))
+        year = int(re.search(r"^ 0?([0-9]{4})[ ;].*", row[1]).group(1))
         if year < stats_dict["year_range"][0]:
             stats_dict["year_range"][0] = year
         if year > stats_dict["year_range"][1]:
