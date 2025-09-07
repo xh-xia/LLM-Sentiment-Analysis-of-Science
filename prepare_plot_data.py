@@ -6,6 +6,7 @@ from helper_functions import reverse_dict_list, reverse_dict_val, savePKL, loadP
 
 
 def prepare_collab_groups(dir_dict, dir_npy, n_bs=1000):
+    print("Running prepare_collab_groups()...")
     cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
     cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
     cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
@@ -27,15 +28,17 @@ def prepare_collab_groups(dir_dict, dir_npy, n_bs=1000):
     np.save(os.path.join(dir_npy, "ratio_mat_rel-collab_groups.npy"), ratio_mat_rel)
 
 
-def prepare_collab_distance(dir_dict, dir_npy, dist_max=6, n_bs=1000):
+def prepare_collab_distance(dir_dict, dir_npy, dist_max=6, n_bs=1000, maxN=15):
     """Calculate sentiment ratio percentage change relative to null model.
     Args:
         dir_dict (str): Folder holding required data.
         dist_max (int): Max collab distance to plot.
         n_bs (int): Number of bootstrap resamples. Defaults to 1000.
+        maxN (int): This is null model parameter, maximum num of sentences.
     """
+    print("Running prepare_collab_distance()...")
     cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
-    cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
+    cite2sent_nul = loadPKL(dir_dict, f"cite2sent_null_param{f'_ns={maxN}' if maxN != 15 else ''}")  # Null model sentiment.
     cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
 
     # row: Distance 0,1,2,...,dist_max; col: 3 sentiment; dep: n_bs data points.
@@ -46,8 +49,8 @@ def prepare_collab_distance(dir_dict, dir_npy, dist_max=6, n_bs=1000):
         print(f"Bootstrapping: sample size {n_samp}, {n_bs} resamples at distance {d}...")
         ratio_mat_rel[d, ...] = find_y_rand_samp(cite2sent_emp, cite2sent_nul, pairs_to_sample, n_rand_samp=n_bs, full_samp=True)
 
-    np.save(os.path.join(dir_npy, "ratio_mat_rel-collab_dist.npy"), ratio_mat_rel)
-    np.save(os.path.join(dir_npy, "groups-collab_dist.npy"), np.arange(dist_max + 1))
+    np.save(os.path.join(dir_npy, f"ratio_mat_rel-collab_dist{f'_ns={maxN}' if maxN != 15 else ''}.npy"), ratio_mat_rel)
+    np.save(os.path.join(dir_npy, f"groups-collab_dist{f'_ns={maxN}' if maxN != 15 else ''}.npy"), np.arange(dist_max + 1))
 
 
 def prepare_t_collab(dir_dict, dir_npy, year_ranges=None, n_bs=1000):
@@ -55,12 +58,14 @@ def prepare_t_collab(dir_dict, dir_npy, year_ranges=None, n_bs=1000):
     Args:
         year_ranges (list of tuples): t2collab range for each bin.
     """
+    print("Running prepare_t_collab()...")
     cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
     cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
-    cite2t_collab = loadPKL(dir_dict, "cite2t_collab")  # Time before first collab in data.
+    # Below two dicts concern the same set of citer-citee (last author) pairs.
+    cite2t_collab = loadPKL(dir_dict, "cite2t_collab")
 
     if year_ranges is None:
-        year_ranges = [(-4, -3), (-2, -1), (0, 0), (1, 2), (3, 4), (5, 6)]
+        year_ranges = [(-4, -3), (-2, -1), (0, 0), (1, 2), (3, 4)]
     n1 = len(year_ranges)  # Num of t2collab bins.
     n2 = 3  # 3 sentiment.
     # Calculate sentiment ratio percentage change relative to null model.
@@ -74,21 +79,20 @@ def prepare_t_collab(dir_dict, dir_npy, year_ranges=None, n_bs=1000):
         ratio_mat_rel[idx, ...] = find_y_rand_samp(
             cite2sent_emp, cite2sent_nul, pairs_sample, len(pairs_sample), n_rand_samp=n_bs, full_samp=True
         )
-
     np.save(os.path.join(dir_npy, "ratio_mat_rel-t_collab.npy"), ratio_mat_rel)
     np.save(os.path.join(dir_npy, "groups-t_collab.npy"), np.array(year_ranges))
 
-    ##### Same as before except this is for citations that never collaborated in the dataset.
-    pairs_sample = [p for p, t in cite2t_collab.items() if np.isinf(t)]
-    ratio_mat_rel = find_y_rand_samp(cite2sent_emp, cite2sent_nul, pairs_sample, len(pairs_sample), n_rand_samp=n_bs, full_samp=True)
-    np.save(os.path.join(dir_npy, "ratio_mat_rel-t_collab_no_collab.npy"), ratio_mat_rel)
-    np.save(os.path.join(dir_npy, "groups-t_collab_no_collab.npy"), np.inf)
-
-    ##### Same as before except this is for citations that will collaborate in next 4 years in the dataset.
+    ##### Same as before except this is for entire LHS.
     pairs_sample = [p for p, t in cite2t_collab.items() if -4 <= t <= -1]
     ratio_mat_rel = find_y_rand_samp(cite2sent_emp, cite2sent_nul, pairs_sample, len(pairs_sample), n_rand_samp=n_bs, full_samp=True)
     np.save(os.path.join(dir_npy, "ratio_mat_rel-t_collab_will_collab.npy"), ratio_mat_rel)
     np.save(os.path.join(dir_npy, "groups-t_collab_will_collab.npy"), np.array([(-4, -1)]))
+
+    ##### Same as before except this is for entire RHS.
+    pairs_sample = [p for p, t in cite2t_collab.items() if 0 <= t <= 4]
+    ratio_mat_rel = find_y_rand_samp(cite2sent_emp, cite2sent_nul, pairs_sample, len(pairs_sample), n_rand_samp=n_bs, full_samp=True)
+    np.save(os.path.join(dir_npy, "ratio_mat_rel-t_collab_has_collab.npy"), ratio_mat_rel)
+    np.save(os.path.join(dir_npy, "groups-t_collab_has_collab.npy"), np.array([(0, 4)]))
 
 
 def prepare_hindex(dir_dict, dir_npy, binW=30, n_bs=1000):
@@ -96,6 +100,7 @@ def prepare_hindex(dir_dict, dir_npy, binW=30, n_bs=1000):
     Args:
         binW (int): Bin width on either side of 0 h-Index diff. Defaults to 30.
     """
+    print("Running prepare_hindex()...")
     cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
     cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
     cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
@@ -144,6 +149,7 @@ def prepare_hindex(dir_dict, dir_npy, binW=30, n_bs=1000):
 
 
 def prepare_country_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
+    print("Running prepare_country_effects()...")
     cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
     cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
     cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
@@ -187,6 +193,7 @@ def prepare_country_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
 
 
 def prepare_department_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
+    print("Running prepare_department_effects()...")
     cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
     cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
     cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
@@ -231,7 +238,53 @@ def prepare_department_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
     np.save(os.path.join(dir_npy, "groups-department_effect.npy"), departments_select)
 
 
+def prepare_department_effects_collab(dir_dict, dir_npy, dist_max=6, n_bs=1000, thres=100):
+    print("Running prepare_department_effects_collab()...")
+    # This is prepare_collab_distance() but broken down by discipline.
+    cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
+    cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
+    paper2last_author_department = loadPKL(dir_dict, "paper2last_author_department_28_dep")  # Last author departments for each paper.
+    last_author_department2paper = reverse_dict_list(paper2last_author_department)
+    n_collab = {c: 0 for c in last_author_department2paper.keys()}
+    for e, sent in cite2sent_emp.items():
+        if cite2distance[e] == 1:
+            for c in paper2last_author_department[e[0]]:
+                n_collab[c] += 1
+    n_collab = {k: v for k, v in n_collab.items() if v >= thres}
+    n_collab = dict(sorted(n_collab.items(), key=lambda d: d[1], reverse=True))
+    departments_select = np.array(list(n_collab.keys()))
+
+    n1 = dist_max + 1  # 0, 1, 2, ..., dist_max.
+    n2 = len(departments_select)  # Num of departments selected.
+    n3 = 3  # 3 sentiment.
+    # Calculate sentiment ratio percentage change relative to null model.
+    ratio_mat_rel = np.zeros((n1, n2, n3, n_bs))
+
+    # Find all citaitons pairs of distance 0, 1, 2, ..., dist_max.
+    pairs_list = [[pair for pair, v in cite2distance.items() if v == d] for d in range(dist_max + 1)]
+
+    for idx, pairs in enumerate(pairs_list):
+        # Find the multi-hot department arr for these pairs.
+        department_arr = np.array(
+            [np.in1d(departments_select, paper2last_author_department[pair[0]], assume_unique=True) for pair in pairs]
+        )
+        # Find corresponding sentiments (both empirical and null) for each department.
+        for c, _ in enumerate(departments_select):
+            # pairs indices where citing paper whose last author is in department departments_select[c].
+            indices = department_arr[:, c].nonzero()[0]
+            pairs_sample = [pairs[i] for i in indices]
+            # Sampling distribution of sentiment ratio percentage change for current department.
+            ratio_mat_rel[idx, c, ...] = find_y_rand_samp(
+                cite2sent_emp, cite2sent_nul, pairs_sample, len(pairs_sample), n_rand_samp=n_bs, full_samp=True
+            )
+
+    np.save(os.path.join(dir_npy, "ratio_mat_rel-department_effect-collab_dist.npy"), ratio_mat_rel)
+    np.save(os.path.join(dir_npy, "groups-department_effect-collab_dist.npy"), departments_select)
+
+
 def prepare_gender_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
+    print("Running prepare_gender_effects()...")
     cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
     cite2sent_nul = loadPKL(dir_dict, "cite2sent_null_param")  # Null model sentiment.
     cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
@@ -253,10 +306,11 @@ def prepare_gender_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
     genders_select = np.array(list(n_collab.keys()))
 
     n1 = 4  # 4 distance types; [1, inf), [1], [2, inf), [0].
-    n2 = len(genders_select)  # Num of genders selected.
-    n3 = 3  # 3 sentiment.
+    n2 = len(genders_select)  # Num of citing genders selected.
+    n3 = len(genders_select) + 1  # Cited gender plus all.
+    n4 = 3  # 3 sentiment.
     # Calculate sentiment ratio percentage change relative to null model.
-    ratio_mat_rel = np.zeros((n1, n2, n3, n_bs))
+    ratio_mat_rel = np.zeros((n1, n2, n3, n4, n_bs))
 
     # Find all citaitons pairs of distance = [1, inf), [1], [2, inf), [0].
     pairs_list = [[pair for pair, v in cite2distance.items() if v >= 1]]
@@ -273,9 +327,26 @@ def prepare_gender_effects(dir_dict, dir_npy, n_bs=1000, thres=100):
             indices = gender_arr[:, c].nonzero()[0]
             pairs_sample = [pairs[i] for i in indices]
             # Sampling distribution of sentiment ratio percentage change for current gender.
-            ratio_mat_rel[idx, c, ...] = find_y_rand_samp(
+            ratio_mat_rel[idx, c, -1, ...] = find_y_rand_samp(
                 cite2sent_emp, cite2sent_nul, pairs_sample, len(pairs_sample), n_rand_samp=n_bs, full_samp=True
             )
+
+    # Now we do it for 2 cited genders.
+    for idx, pairs in enumerate(pairs_list):
+        # Find the one-hot gender arr for these pairs.
+        gender_arr0 = np.array([np.in1d(genders_select, [paper2last_author_gender[pair[0]]], assume_unique=True) for pair in pairs])
+        gender_arr1 = np.array([np.in1d(genders_select, [paper2last_author_gender[pair[1]]], assume_unique=True) for pair in pairs])
+        # Find corresponding sentiments (both empirical and null) for each gender.
+        for c0, _ in enumerate(genders_select):
+            for c1, _ in enumerate(genders_select):
+                # pairs indices where citing paper whose last author is in gender genders_select[c0].
+                # and also where cited paper whose last author is in gender genders_select[c1].
+                indices = (gender_arr0[:, c0] & gender_arr1[:, c1]).nonzero()[0]
+                pairs_sample = [pairs[i] for i in indices]
+                # Sampling distribution of sentiment ratio percentage change for current gender.
+                ratio_mat_rel[idx, c0, c1, ...] = find_y_rand_samp(
+                    cite2sent_emp, cite2sent_nul, pairs_sample, len(pairs_sample), n_rand_samp=n_bs, full_samp=True
+                )
 
     np.save(os.path.join(dir_npy, "ratio_mat_rel-gender_effect.npy"), ratio_mat_rel)
     np.save(os.path.join(dir_npy, "groups-gender_effect.npy"), genders_select)
@@ -297,7 +368,7 @@ def get_sample_size_department(dir_dict, thres=100):
 
 def get_sample_size_country(dir_dict, thres=100):
     cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
-    paper2last_author_country = loadPKL(dir_dict, "paper2last_author_country")# Last author departments for each paper.
+    paper2last_author_country = loadPKL(dir_dict, "paper2last_author_country")  # Last author departments for each paper.
     last_author_country2paper = reverse_dict_list(paper2last_author_country)
     n_collab = {c: 0 for c in last_author_country2paper.keys()}
     for e, d in cite2distance.items():
@@ -307,3 +378,56 @@ def get_sample_size_country(dir_dict, thres=100):
     n_collab = {k: v for k, v in n_collab.items() if v >= thres}
     n_collab = dict(sorted(n_collab.items(), key=lambda d: d[1], reverse=True))
     return n_collab
+
+
+def prepare_department_effects_only(dir_dict, dir_npy, n_bs=1000, thres=100, which_only=None):
+    if which_only is None:
+        which_only = "research-article"
+    print("Running prepare_department_effects_only()...")
+    cite2sent_emp = loadPKL(dir_dict, "cite2sent_2")  # Each citation pair has 1 empirical sentiment.
+    cite2sent_nul = loadPKL(dir_dict, f"cite2sent_null_param_{which_only}")  # Null model sentiment.
+    cite2distance = loadPKL(dir_dict, "cite2distance")  # Collaboration distance.
+    # Only use keys in cite2sent_nul, which excludes review papers.
+    cite2sent_emp = {k: v for k, v in cite2sent_emp.items() if k in cite2sent_nul}
+    cite2distance = {k: v for k, v in cite2distance.items() if k in cite2sent_nul}
+    paper2last_author_department = loadPKL(dir_dict, "paper2last_author_department_28_dep")  # Last author departments for each paper.
+    last_author_department2paper = reverse_dict_list(paper2last_author_department)
+    n_collab = {c: 0 for c in last_author_department2paper.keys()}
+    for e, sent in cite2sent_emp.items():
+        if cite2distance[e] == 1:
+            for c in paper2last_author_department[e[0]]:
+                n_collab[c] += 1
+    n_collab = {k: v for k, v in n_collab.items() if v >= thres}
+    n_collab = dict(sorted(n_collab.items(), key=lambda d: d[1], reverse=True))
+    departments_select = np.array(list(n_collab.keys()))
+
+    n1 = 3  # 3 distance types; [1, inf), [1], [2, inf).
+    n2 = len(departments_select)  # Num of departments selected.
+    n3 = 3  # 3 sentiment.
+    # Calculate sentiment ratio percentage change relative to null model.
+    ratio_mat_rel = np.zeros((n1, n2, n3, n_bs))
+
+    # Find all citaitons pairs of distance = [1, inf), [1], and [2, inf).
+    pairs_list = [[pair for pair, v in cite2distance.items() if v >= 1]]
+    pairs_list.append([pair for pair, v in cite2distance.items() if v == 1])
+    pairs_list.append([pair for pair, v in cite2distance.items() if v >= 2])
+
+    for idx, pairs in enumerate(pairs_list):
+        # Find the multi-hot department arr for these pairs.
+        department_arr = np.array(
+            [np.in1d(departments_select, paper2last_author_department[pair[0]], assume_unique=True) for pair in pairs]
+        )
+        # Find corresponding sentiments (both empirical and null) for each department.
+        for c, _ in enumerate(departments_select):
+            # pairs indices where citing paper whose last author is in department departments_select[c].
+            indices = department_arr[:, c].nonzero()[0]
+            pairs_sample = [pairs[i] for i in indices]
+            # Sampling distribution of sentiment ratio percentage change for current department.
+            ratio_mat_rel[idx, c, ...] = find_y_rand_samp(
+                cite2sent_emp, cite2sent_nul, pairs_sample, len(pairs_sample), n_rand_samp=n_bs, full_samp=True
+            )
+
+    np.save(os.path.join(dir_npy, f"ratio_mat_rel-department_effect-{which_only}.npy"), ratio_mat_rel)
+    np.save(os.path.join(dir_npy, f"groups-department_effect-{which_only}.npy"), departments_select)
+
+

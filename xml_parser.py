@@ -680,8 +680,7 @@ def _xml_parser(xml_path, article_types, article_year, ref_meta_tags):
 
     # pmcid here is only used for debugging prints
     pmcid = os.path.basename(xml_path)
-    if pmcid.startswith("PMC"):
-        pmcid = pmcid[3:]
+    pmcid = int(pmcid[3:-4]) if pmcid.startswith("PMC") else int(pmcid[:-4])
 
     for el in article.xpath("back/ref-list/ref"):
         ref_id = el.get("id")
@@ -732,9 +731,9 @@ def _xml_parser(xml_path, article_types, article_year, ref_meta_tags):
         key_info["article-title"] = title_[0].text
     elif len(title_) > 1:
         key_info["article-title"] = title_[0].text
-        print(f'warning427 {key_info["uid"]} has more than 1 title: {title_} (used 1st one)')
+        print(f'warning {key_info["uid"]} has more than 1 title: {title_} (used 1st one)')
     else:  # no title-group/article-title
-        print(f'warning427 {key_info["uid"]} has no title-group/article-title')
+        print(f'warning {key_info["uid"]} has no title-group/article-title')
         key_info["article-title"] = None
 
     # author & affiliations
@@ -742,7 +741,7 @@ def _xml_parser(xml_path, article_types, article_year, ref_meta_tags):
     key_info["authors"] = dict()
     contrib_grp = article.xpath("front/article-meta/contrib-group")  # list
     if len(contrib_grp) == 0:
-        print(f'warning427 {key_info["uid"]} has 0 contrib Element, authors acquisition skipped')
+        print(f'warning {key_info["uid"]} has 0 contrib Element, authors acquisition skipped')
         flag_au = False
 
     if flag_au:
@@ -775,13 +774,13 @@ def _xml_parser(xml_path, article_types, article_year, ref_meta_tags):
                     # I hand modified them 8 papers:
                     # if they don't have aff, I put their collab name as institution
                     # if they don't have authors, I put their collab name as first name and last name
-                    # print(f'warning427 {key_info["uid"]}, below contrib Element is not human author, but collab, skipped:')
+                    # print(f'warning {key_info["uid"]}, below contrib Element is not human author, but collab, skipped:')
                     # print(etree.tostring(au, pretty_print=True).decode())
                     continue
                 if namae is None:
                     namae = au.find("name-alternatives/name")
                     if namae is None:  # not collab, nor name-alternatives, skipped
-                        print(f'warning427 {key_info["uid"]}, below contrib Element is neither collab nor name-alternatives, skipped:')
+                        print(f'warning {key_info["uid"]}, below contrib Element is neither collab nor name-alternatives, skipped:')
                         print(etree.tostring(au, pretty_print=True).decode())
                         continue
                 tmp_fname = namae.find("given-names")  # there are a few cases where this tag is present, but no text (sole <given-names/>)
@@ -817,7 +816,7 @@ def _xml_parser(xml_path, article_types, article_year, ref_meta_tags):
                     }
                 au_o += 1
             # else:  # commented out cuz it doesn't matter what other contrib Element is like
-            #     print(f'warning427 {key_info["uid"]}, below contrib Element is not author:')
+            #     print(f'warning {key_info["uid"]}, below contrib Element is not author:')
             #     print(etree.tostring(au, pretty_print=True).decode())
 
     if not key_info["authors"]:  # no authors found

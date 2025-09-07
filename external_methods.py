@@ -2,7 +2,7 @@ import os
 import pickle
 import json
 import openai
-import tiktoken
+import tiktoken  # Token estimation.
 import time
 import requests  # For WOS.
 import traceback  # For WOS.
@@ -11,16 +11,31 @@ import numpy as np
 import networkx as nx
 import pandas as pd
 from tqdm import tqdm
+import re  # For newline check.
 
 # import metapub as mp # time.sleep(0.5) cuz <=3 requests/sec; otherwise need API key for fetch (from NCBI).
 from collections import defaultdict
 
 from pubmed_parser import parse_pubmed_paragraph
-from helper_functions import reverse_dict_val, reverse_dict_list
+from helper_functions import reverse_dict_val, reverse_dict_list, loadPKL, savePKL
 
-ENC = tiktoken.encoding_for_model("gpt-3.5-turbo")
+# ENC = tiktoken.encoding_for_model("gpt-3.5-turbo")
+ENC = tiktoken.get_encoding("cl100k_base")
+# Per https://github.com/openai/tiktoken/blob/main/tiktoken/model.py
+# both 3.5-turbo and 4 families use the same cl100k_base encoding.
 # Context window for GPT-3.5-turbo is 16,385 tokens.
-MAX_TOKEN = 10000  # Intro and some results/methods to get a good idea on whether a paper is benchwork. 10K is more than enough.
+# MAX_TOKEN = 10000  # Intro and some results/methods to get a good idea on whether a paper is benchwork. 10K is more than enough.
+MAX_TOKEN = 100000  # 100K (roughly 75K words) should be enough now. 4.1 and 4.1-mini have context window 1,047,576 tokens.
+
+
+def remove_newline(txt, stuff=None):
+    if stuff == None:
+        stuff = ""
+    return re.sub(r"\n|\r|\r\n|\n\r|\036", stuff, txt)
+
+
+def get_num_token(txt):
+    return len(ENC.encode(txt))
 
 
 def find_nth_overlapping(haystack, needle, n):
@@ -58,7 +73,7 @@ def make_subset_from_cnets(cnets):
 
 
 def save_CGPT_input_files(dir_cnets, dir_out, subset=None, cite_marker="✪"):
-    """generate input .txt files for ChatGPT (v3.5) ("CGPT")
+    """generate input .txt files of sentences to be rated by ChatGPT ("CGPT")
     remove "()" & "[]" for all sentences involved here
 
     Kwarg
@@ -91,8 +106,7 @@ def save_CGPT_input_files(dir_cnets, dir_out, subset=None, cite_marker="✪"):
             val[3]: (int or None) rating to be had
 
     """
-    with open(os.path.join(dir_cnets, "cnets2_Neuroscience.pkl"), "rb") as f:
-        cnets = pickle.load(f)
+    cnets = loadPKL(dir_cnets, "cnets2_Neuroscience")
     # find subset of articles to pick sentences from
     if subset is None:
         subset = make_subset_from_cnets(cnets)
@@ -104,8 +118,7 @@ def save_CGPT_input_files(dir_cnets, dir_out, subset=None, cite_marker="✪"):
     sentrow2edgeinfo = dict()
     samp_idx = all_sents.keys()  # sentence idx
 
-    kwargs = dict(encoding="UTF-8")
-    with open(os.path.join(dir_out, "sentences2rate-CGPT.txt"), mode="w+", **kwargs) as file_out:
+    with open(os.path.join(dir_out, "sentences2rate-CGPT.txt"), mode="w+", encoding="UTF-8") as file_out:
         row_idx = 0
         for idx in samp_idx:
             if sent_idx2pmcid_lookup[idx] not in subset:  # skip ones not in subset
@@ -122,24 +135,12 @@ def save_CGPT_input_files(dir_cnets, dir_out, subset=None, cite_marker="✪"):
                     tmp_sent = tmp_sent.replace(new_marker, cite_marker)  # return the cite_marker
                     tmp_sent = tmp_sent.replace("()", "")
                     tmp_sent = tmp_sent.replace("[]", "")
+                    assert re.search(r"\n|\r|\r\n|\n\r|\036", tmp_sent) is None, f"{tmp_sent} has newline char."
                     file_out.write(tmp_sent + "\n")
                     sentrow2edgeinfo[row_idx] = [idx, sent_idx2pmcid_lookup[idx], [s for s in c], None]
                     row_idx += 1
 
-    with open(os.path.join(dir_out, "sentrow2edgeinfo.pkl"), "wb") as f:
-        pickle.dump(sentrow2edgeinfo, f)
-
-
-def CGPT_init(api_key):
-    client = openai.OpenAI(api_key=api_key)
-    system_prompt = """For each in-text citation, the rater should measure the sentiment of the citing research toward the cited research (represented as the character ✪), on a scale of -1 to 1. 
-    The rater should assign a positive score (+1) to statements depicting the cited research as positive, corroborative, consistent with, similar to, or in common with the citing research.
-    Conversely, the rater should assign a negative score (-1) to statements depicting the cited research as negative, refuting, inconsistent with, dissimilar to, or different from the citing research.
-    If the statements are neutral or do not belong to the aforementioned categories, then the rater should assign 0 to the statements. 
-    When you are given a sentence only answer with the numerical results without explanation."""
-    user_prompt = "The sentence to analyze is: "
-    init_dict = {"client": client, "system_prompt": system_prompt, "user_prompt": user_prompt}
-    return init_dict
+    savePKL(dir_out, "sentrow2edgeinfo", sentrow2edgeinfo)
 
 
 def CGPT_init_benchwork(api_key):
@@ -150,19 +151,54 @@ def CGPT_init_benchwork(api_key):
     return init_dict
 
 
+def CGPT_init_crit_5_explain(api_key):  # All examples are based on what I randomly sampled from our data.
+    client = openai.OpenAI(api_key=api_key)
+    system_prompt = """You are a qualitative coder annotating citation text excerpts from scientific articles. To code the given excerpt, do the following:
+    - First, read this codebook instruction and the excerpt.
+    - Next, decide which code is most applicable.
+    - Lastly, choose the most applicable code and give a brief explanation. Respond by calling the function "label_text".
+
+    Codebook:
+    There is a most applicable 4-letter code from below three codes that describes the stance and tone of the citing paper (excerpt) in the presence of the target cited paper indicated by "✪".
+
+    CRIT:
+    1. The excerpt points out a weakness, fault, or limitation in the presence of the target cited paper. For example, "The lack of protocol ✪ emphasizes the need for better strategies."
+    2. The excerpt raises concerns or disagreement or lack of consensus in the presence of the target cited paper. For example, "Highly debated, these observations challenge our understanding... ✪"
+    3. The excerpt reports inconsistency with the results or methods involving the target cited paper. For example, "We showed that... while another study ✪ reported inconsistent results."
+
+    FAVO:
+    1. The excerpt points out a strength or consensus in the presence of the target cited paper. Such strengths are either obvious advantages and improvements of models, methods, or materials, or important and significant contribution to the field. For example, "Several state-of-the-art brain atlases provide features based on criteria (X2, 2011; ✪; X3, 2012)."
+    2. The excerpt explicitly reports significant and notable consistency with the results or methods involving the target cited paper. For example, "Similar to the literature ✪, we found that..."
+
+    NEUT:
+    1. Citing paper presents facts or neutral statements in the presence of the target cited paper. For example, "These types constitute only a fraction of conditions (1% for condition A ✪, 5% for condition B)."
+    2. Citing paper expresses the presence of a scientific gap in knowledge or understanding. For example, "The relation between A and B remains unclear... ✪"
+    3. Both critical and favorable tones are present in the same excerpt. For example, "Although this concept remains poorly understood, recent studies suggest a link... (X4, 2015; ✪)"
+    
+    Note that if there is a comparison in the excerpt, then the comparison is a "CRIT" if the attribute in the comparison is negative, and "FAVO" if positive.
+    
+    Also note that coding decision should be based on the language not the science in the excerpt. As such, the judgement should not be based on positive or negative statistical and mathematical relations, nor be based on attributes of individuals or things being studied.
+    
+    Task: Choose the most applicable code based on the language in the excerpt given below, give rationale, and respond calling function "label_text".
+    """
+    user_prompt = "Excerpt: "
+    init_dict = {"client": client, "system_prompt": system_prompt, "user_prompt": user_prompt}
+    return init_dict
+
+
 def get_txt_from_paragraphs(paragraphs):
     current_token__count = 0
     txt_to_sent = ""
     for i, pa in enumerate(paragraphs):
-        txt = pa["text"].replace("\n", "").strip()  # Remove newlines and strip.
-        txt_enc = ENC.encode(txt)
-        if current_token__count + len(txt_enc) > MAX_TOKEN:
+        txt = remove_newline(pa["text"], " ").strip()  # Remove newlines and strip.
+        enc_len = get_num_token(txt)
+        if current_token__count + enc_len > MAX_TOKEN:
             break
         txt_to_sent += txt
-        current_token__count += len(txt_enc)
+        current_token__count += enc_len
     if len(txt_to_sent) == 0:
         raise Exception(f"PMC={paragraphs[0]['pmc']} first section already goes over token limits.")
-    return txt_to_sent
+    return txt_to_sent.strip()
 
 
 def save_paper_snippet(dir_xml, dir_dict, dir_tmp, n_paper=100):
@@ -218,10 +254,8 @@ def save_paper_snippet(dir_xml, dir_dict, dir_tmp, n_paper=100):
             if n_found != n_paper:
                 raise Exception(f"After parsing, not enough papers in {d}.")
 
-    with open(os.path.join(dir_tmp, "dep2_100papers.pkl"), "wb") as f:
-        pickle.dump(dep2_100papers, f)
-    with open(os.path.join(dir_tmp, "benchwork_text_row2paper.pkl"), "wb") as f:
-        pickle.dump(benchwork_text_row2paper, f)
+    savePKL(dir_tmp, "dep2_100papers", dep2_100papers)
+    savePKL(dir_tmp, "benchwork_text_row2paper", benchwork_text_row2paper)
 
     with open(os.path.join(dir_tmp, "benchwork_text_CGPT.txt"), mode="r+", **kwargs) as file_out:
         out = file_out.readlines()
@@ -231,16 +265,198 @@ def save_paper_snippet(dir_xml, dir_dict, dir_tmp, n_paper=100):
         raise Exception(f"Please rerun this function.")
 
 
-def get_rating(citation_text, init_dict, model=None):
-    if model is None:
-        model = "gpt-3.5-turbo-0125"  # 2024 model untrained, not as good as 2023 one for sentiment; but better for benchwork detection
-        model = "gpt-3.5-turbo-1106"  # 2023 model untrained; use a trained model if possible, but otherwise use this one
+def sample_sentence_snippet(dir_tmp, dir_xml, dir_dict, dir_batch, n_iter=10, n_samp=100, n_iter2=5, n_samp2=50, seed=1):
+    """
+    Kwargs:
+        - n_iter (int): Num of iterations of random samples (without replacement).
+        - n_samp (int): Sample size to draw without replacement from the dataset per iteration, same for both sentence and snippet.
+    Load (dir_tmp and dir_xml):
+        for sentence (both in dir_tmp):
+        - "sentences2rate-CGPT.txt"
+        each line contains a sentence for CGPT to rate
+        - sentrow2edgeinfo (dict): pkl file
+        for snippet (in dir_xml):
+        .xml files holding everything "internal" about the papers.
+    Save (in dir_batch):
+        2x<n_iter> csv (copy as txt for CGPT) files to rate, plus 2 corresponding bookkeeping files recording what samples we have drawn.
+    """
+    RNG = np.random.default_rng(seed)
+    ####### Sentence part #######
+    sentrow2edgeinfo = loadPKL(dir_tmp, "sentrow2edgeinfo")
+    grid1 = RNG.choice(list(sentrow2edgeinfo.keys()), size=(n_iter, n_samp), replace=False)
+    with open(os.path.join(dir_tmp, "sentences2rate-CGPT.txt"), mode="r", encoding="UTF-8") as f:
+        lines = f.read().splitlines()  # Index same as sentrow2edgeinfo keys.
+    for i in range(n_iter):
+        # For humans.
+        df = pd.DataFrame({"sentence": [lines[grid1[i, j]] for j in range(n_samp)], "rating": [None for _ in range(n_samp)]})
+        df.to_csv(os.path.join(dir_batch, f"random_sample_sentences_{i}.csv"), index=False)
+
+        # For machines.
+        with open(os.path.join(dir_batch, f"sentences2rate-CGPT_{i}.txt"), mode="w+", encoding="UTF-8") as file_out:
+            for j in range(n_samp):
+                tmp_sent = lines[grid1[i, j]]
+                assert re.search(r"\n|\r|\r\n|\n\r|\036", tmp_sent) is None, f"{tmp_sent} has newline char."
+                file_out.write(tmp_sent + "\n")
+
+    ####### Snippet part #######
+    paper2meta = loadPKL(dir_dict, "paper2meta")
+    # We don't differentiate their departments here.
+    paper2meta = {k: v for k, v in paper2meta.items() if v["article-type"] == "research-article"}  # Include only research papers.
+    grid2 = RNG.choice(list(paper2meta.keys()), size=(n_iter2, n_samp2), replace=False)
+    files = set(file for file in os.listdir(dir_xml) if file.endswith(".xml"))
+
+    for i in range(n_iter2):
+        # For humans and bookkeeping.
+        URLs, rows, pmcids = [], [], []
+        # For machines.
+        with open(os.path.join(dir_batch, f"benchwork_text_CGPT_{i}.txt"), mode="w+", encoding="UTF-8") as file_out:
+            row = 0
+            for p in grid2[i, :]:
+                tmp1 = f"{p}.xml"
+                if tmp1 not in files:
+                    tmp1 = f"PMC{p}.xml"
+                assert tmp1 in files, f"paper PMC={p} is not in {dir_xml}."
+                tmp1 = os.path.join(dir_xml, tmp1)
+                para = parse_pubmed_paragraph(tmp1, all_paragraph=True)  # We don't care about ref here, so True.
+                if len(para) == 0:
+                    print(f"PMC={p} has no paragraphs found.")
+                    continue  # Skip this paper.
+                line = get_txt_from_paragraphs(para)
+                file_out.write(line + "\n")
+                # Update bookkeeping info for humans.
+                pmcids.append(p)
+                URLs.append(rf"http://pmc.ncbi.nlm.nih.gov/articles/PMC{p}")
+                rows.append(row)
+                row += 1
+
+        df = pd.DataFrame({"row": rows, "PMC": pmcids, "URL": URLs, "rating (1: WET, 0: DRY)": [None for _ in range(len(URLs))]})
+        df.to_csv(os.path.join(dir_batch, f"random_sample_urls_{i}.csv"), index=False)
+
+    bk = dict(grid1=grid1, grid2=grid2, n_iter=n_iter, n_samp=n_samp, n_iter2=n_iter, n_samp2=n_samp, seed=seed)
+    savePKL(dir_batch, "bk_all", bk)
+    return bk
+
+
+def subsample_sentence_snippet_WIP(dir_in_r2r, dir_in_txt, dir_out, i, model, n_samps=None, seed=1):
+    if n_samps is None:
+        n_samps = {-1: 100, 1: 100, 0: 100}
+    RNG = np.random.default_rng(seed)
+    # Row is row in sentences2rate-CGPT_i.txt, same as index for bk["grid1"][i].
+    row2rate = process_row2rate(loadPKL(dir_in_r2r, f"{model}-row2rate-{i}"), verbose=False, crit=True)
+    with open(os.path.join(dir_in_txt, f"sentences2rate-CGPT_{i}.txt"), mode="r", encoding="UTF-8") as f:
+        lines = f.read().splitlines()
+    for lab, n_samp in n_samps.items():
+        rows = [row for row, rate in row2rate.items() if rate == lab]
+        rows = RNG.choice(rows, size=n_samp, replace=False)
+        subrow2row = dict()
+        with open(os.path.join(dir_out, f"sentences2rate-CGPT_{i}_{lab}.txt"), mode="w+", encoding="UTF-8") as file_out:
+            subrow = 0
+            for row in rows:
+                tmp_sent = lines[row]
+                assert re.search(r"\n|\r|\r\n|\n\r|\036", tmp_sent) is None, f"{tmp_sent} has newline char."
+                file_out.write(tmp_sent + "\n")
+                subrow2row[subrow] = row
+                subrow += 1
+        savePKL(dir_out, f"subrow2row_{i}_{lab}", subrow2row)
+
+
+def save_sentence2rate_csv(row2rate, dir_txt, dir_csv, i=None, lab=None):
+    rows = [row for row in row2rate.keys()]
+    fname = f"sentences2rate-CGPT"
+    if i is not None:
+        fname += f"_{i}"
+    if lab is not None:
+        fname += f"_{lab}"
+    with open(os.path.join(dir_txt, f"{fname}.txt"), mode="r", encoding="UTF-8") as f:
+        lines = f.read().splitlines()
+    df = pd.DataFrame({"sentence": [lines[row] for row in rows], "rating": [row2rate[row] for row in rows]})
+    fname = f"sentence2rate"
+    if i is not None:
+        fname += f"_{i}"
+    if lab is not None:
+        fname += f"_{lab}"
+    df.to_csv(os.path.join(dir_csv, f"{fname}.csv"), index=False)
+
+
+def subsample_save_sentence2rate_reason_csv(dir_in_r2r, dir_in_txt, dir_out, i, model, n_samps=None, seed=1):
+    if n_samps is None:
+        n_samps = {-1: 20, 1: 20, 0: 20}
+    RNG = np.random.default_rng(seed)
+    # Row is row in sentences2rate-CGPT_i.txt.
+    row2rate_reason = process_row2rate(loadPKL(dir_in_r2r, f"{model}-row2rate_reason-{i}"), verbose=False, fc=True)
+    with open(os.path.join(dir_in_txt, f"sentences2rate-CGPT_{i}.txt"), mode="r", encoding="UTF-8") as f:
+        lines = f.read().splitlines()
+    lab2df = {k: None for k in n_samps}
+    for lab, n_samp in n_samps.items():
+        rows = [row for row, rr in row2rate_reason.items() if rr[0] == lab]
+        rows = RNG.choice(rows, size=n_samp, replace=False)
+        lab2df[lab] = pd.DataFrame(
+            {
+                "sentence": [lines[row] for row in rows],
+                "LLM rating": [row2rate_reason[row][0] for row in rows],
+                "LLM reason": [row2rate_reason[row][1] for row in rows],
+            }
+        )
+    # Stack samples of all 3 classes.
+    df = pd.concat(list(lab2df.values()), ignore_index=True)
+    # Shuffle them.
+    df = df.iloc[RNG.permutation(len(df))].reset_index(drop=True)
+    fname = f"sentence2rate_reason"
+    if i is not None:
+        fname += f"_{i}"
+    df.to_csv(os.path.join(dir_out, f"{fname}.csv"), index=False)
+
+
+def subsample_save_snippet2rate_reason_csv(dir_in_r2r, dir_in_txt, dir_out, i, model, n_samps=None, seed=1, fc=True):
+    if n_samps is None:
+        n_samps = {1: 20, 0: 20}
+    suffix = "_reason" if fc else ""
+    RNG = np.random.default_rng(seed)
+    # Row is row in benchwork_text_CGPT_i.txt, same as random_sample_urls_i.csv.
+    row2rate_reason = process_row2rate(loadPKL(dir_in_r2r, f"{model}-row2rate{suffix}-{i}"), verbose=False, fc=fc, bench=True)
+    df_url = pd.read_csv(os.path.join(dir_in_txt, f"random_sample_urls_{i}.csv"), sep=",")
+    lab2df = {k: None for k in n_samps}
+    for lab, n_samp in n_samps.items():
+        if fc:
+            rows = [row for row, rr in row2rate_reason.items() if rr[0] == lab]
+        else:
+            rows = [row for row, rr in row2rate_reason.items() if rr == lab]
+        rows = RNG.choice(rows, size=n_samp, replace=False)
+        if fc:
+            lab2df[lab] = pd.DataFrame(
+                {
+                    "URL": [df_url.loc[df_url["row"] == row, "URL"].item() for row in rows],
+                    "LLM rating": [row2rate_reason[row][0] for row in rows],
+                    "LLM reason": [row2rate_reason[row][1] for row in rows],
+                }
+            )
+        else:
+            lab2df[lab] = pd.DataFrame(
+                {
+                    "URL": [df_url.loc[df_url["row"] == row, "URL"].item() for row in rows],
+                    "LLM rating": [row2rate_reason[row] for row in rows],
+                }
+            )
+    # Stack samples of all 2 classes.
+    df = pd.concat(list(lab2df.values()), ignore_index=True)
+    # Shuffle them.
+    df = df.iloc[RNG.permutation(len(df))].reset_index(drop=True)
+    fname = f"snippet2rate{suffix}"
+    if i is not None:
+        fname += f"_{i}"
+    df.to_csv(os.path.join(dir_out, f"{fname}.csv"), index=False)
+
+
+def get_rating_fc(citation_text, init_dict, model, bench=False):
+    functs = make_functions_bench() if bench else make_functions()
     messages = [{"role": "system", "content": init_dict["system_prompt"]}]
     messages.append({"role": "user", "content": init_dict["user_prompt"] + citation_text})
     try:
-        chat_completion = init_dict["client"].chat.completions.create(model=model, temperature=0.01, messages=messages)
+        chat_completion = init_dict["client"].chat.completions.create(
+            model=model, temperature=0, messages=messages, functions=functs, function_call={"name": functs[0]["name"]}
+        )
     except openai.APIConnectionError as e:
-        print("The server could not be reached")
+        print("The server could not be reached.")
         print(e.__cause__)
         return None
     except openai.RateLimitError as e:
@@ -248,13 +464,128 @@ def get_rating(citation_text, init_dict, model=None):
         print(e)
         return None
     except openai.APIStatusError as e:
-        print("Another non-200-range status code was received")
+        print("Another non-200-range status code was received.")
         print(e.status_code)
         print(e.response)
         return None
-    response = chat_completion.choices[0].message.content
+    except:
+        print("Other error.")
+        return None
 
+    try:
+        response = chat_completion.choices[0].message.function_call.arguments
+    except:
+        print(f"response = chat_completion.choices[0].message.function_call.arguments line has an error.")
+        return None
     return response
+
+
+def send_request_nonbatch_fc(
+    init_dict, model, dir_txt, dir_r2r, fname=None, i=None, lab=None, interval=0.12, num=500, bench=False, list_todo=None, period=2666
+):
+    if fname is None:
+        fname = "sentences2rate-CGPT"
+    with open(os.path.join(dir_txt, f"{fname}.txt"), mode="r", encoding="UTF-8") as f:
+        lines = f.readlines()  # Index same as sentrow2edgeinfo keys.
+    if list_todo is None:
+        list_todo = list(range(len(lines)))
+    list_sentences = [lines[l].strip() for l in list_todo]
+
+    r2r_name = f"{model}-row2rate_reason"
+    if i is not None:
+        r2r_name += f"-{i}"
+    if lab is not None:
+        r2r_name += f"-{lab}"
+    try:
+        row2rate = loadPKL(dir_r2r, r2r_name)
+    except:
+        row2rate = dict()
+
+    c = 0
+    for idx, sentence in tqdm(zip(list_todo, list_sentences)):
+        if idx in row2rate:
+            continue  # Skip ones we have requested and gotten a not-None response.
+        if c > num:  # 10,000 RPD
+            break
+        if c % period == 0:  # Periodic save.
+            savePKL(dir_r2r, r2r_name, row2rate)
+        time.sleep(interval)
+        ans = get_rating_fc(sentence, init_dict, model, bench)
+        c += 1
+        if ans is not None:
+            ans = json.loads(ans)
+            row2rate[idx] = [ans["code"], ans["why"]]
+        else:  # Any problem in get_rating_fc().
+            print("Requesting process has stopped.")
+            break
+    savePKL(dir_r2r, r2r_name, row2rate)
+
+
+def get_rating(citation_text, init_dict, model):
+    messages = [{"role": "system", "content": init_dict["system_prompt"]}]
+    messages.append({"role": "user", "content": init_dict["user_prompt"] + citation_text})
+    try:
+        chat_completion = init_dict["client"].chat.completions.create(model=model, temperature=0, messages=messages)
+    except openai.APIConnectionError as e:
+        print("The server could not be reached.")
+        print(e.__cause__)
+        return None
+    except openai.RateLimitError as e:
+        print("A 429 status code was received; we should back off a bit.")
+        print(e)
+        return None
+    except openai.APIStatusError as e:
+        print("Another non-200-range status code was received.")
+        print(e.status_code)
+        print(e.response)
+        return None
+    except:
+        print("Other error.")
+        return None
+
+    try:
+        response = chat_completion.choices[0].message.content
+    except:
+        print(f"response = chat_completion.choices[0].message.content line has an error.")
+        return None
+    return response
+
+
+def send_request_nonbatch_OLD(init_dict, model, dir_txt, dir_r2r, fname=None, i=None, lab=None, interval=0.12, num=500, bench=False):
+    if fname is None:
+        fname = "sentences2rate-CGPT"
+    with open(os.path.join(dir_txt, f"{fname}.txt"), mode="r", encoding="UTF-8") as f:
+        lines = f.readlines()  # Index same as sentrow2edgeinfo keys.
+    list_todo = [l for l in range(len(lines))]
+    list_sentences = [line.strip() for line in lines]
+
+    r2r_name = f"{model}-row2rate"
+    if i is not None:
+        r2r_name += f"-{i}"
+    if lab is not None:
+        r2r_name += f"-{lab}"
+    try:
+        row2rate = loadPKL(dir_r2r, r2r_name)
+    except:
+        row2rate = dict()
+
+    c = 0
+    for idx, sentence in tqdm(zip(list_todo, list_sentences)):
+        if idx in row2rate:
+            continue  # Skip ones we have requested and gotten a not-None response.
+        if c > num:  # 10,000 RPD
+            break
+        if c % 250 == 0:  # Periodic save.
+            savePKL(dir_r2r, r2r_name, row2rate)
+        time.sleep(interval)
+        ans = get_rating_OLD(sentence, init_dict, model)
+        c += 1
+        if ans is not None:
+            row2rate[idx] = ans.strip()
+        else:  # Any problem in get_rating_OLD().
+            print("Requesting process has stopped.")
+            break
+    savePKL(dir_r2r, r2r_name, row2rate)
 
 
 def get_embedding(client, text, model=None):
@@ -545,11 +876,50 @@ def send_finetune_job(init_dict, model, dir_batch, file_name, hyperparams=None):
     print(f"Finetuning job sent with hyperparameters:\n{hyperparams}")
 
 
-def make_batches(init_dict, model, path_in, path_out, batch_size):
+def make_functions():  # To enforce strict JSON response.
+    functions = [
+        {
+            "name": "label_text",
+            "description": "Label the citation text into one of CRIT, FAVO, NEUT, and explain why",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "enum": ["CRIT", "FAVO", "NEUT"], "description": "One of the four-letter codes"},
+                    "why": {"type": "string", "description": "A brief rationale for why this code was chosen"},
+                },
+                "required": ["code", "why"],
+            },
+        }
+    ]
+    return functions
+
+
+def make_functions_bench():  # To enforce strict JSON response.
+    functions = [
+        {
+            "name": "label_text",
+            "description": "Label the paper content as either WET or DRY, and explain why",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "enum": ["WET", "DRY"], "description": "One of the three-letter codes"},
+                    "why": {"type": "string", "description": "A brief rationale for why this code was chosen"},
+                },
+                "required": ["code", "why"],
+            },
+        }
+    ]
+    return functions
+
+
+def make_batches(init_dict, model, path_in, path_out, batch_size, fname=None, batch_num=None):
     batch_files = []
     list_todo = []
     list_sentences = []
-    with open(os.path.join(path_in, "sentences2rate-CGPT.txt"), "r") as f:
+    num_tokens = 0
+    if fname is None:
+        fname = "sentences2rate-CGPT"
+    with open(os.path.join(path_in, f"{fname}.txt"), mode="r", encoding="UTF-8") as f:
         for index, line in enumerate(f):
             list_todo.append(index)
             list_sentences.append(line.strip())
@@ -563,6 +933,9 @@ def make_batches(init_dict, model, path_in, path_out, batch_size):
             break
 
     for batch_todo in range(len(list_of_batch)):
+        # DEBUG, temp set one batch to do.
+        if batch_num is not None and batch_todo != batch_num:  # If specified as an int, only run one of many batches.
+            continue
         tasks = []
         for index_sent in list_of_batch[batch_todo]:
 
@@ -575,42 +948,210 @@ def make_batches(init_dict, model, path_in, path_out, batch_size):
                 "url": "/v1/chat/completions",
                 "body": {
                     "model": model,
-                    "temperature": 0.01,
+                    "temperature": 0,  # Changed from 0.01 to 0 to ensure consistency across identical runs.
+                    # "max_completion_tokens": 50, # Default reply max is context window - len(prompt).
                     "messages": messages,
                 },
             }
             tasks.append(task)
+            num_tokens += get_num_token(messages[0]["content"]) + get_num_token(messages[1]["content"])
 
-        file_name = os.path.join(path_out, f"sentiment_batch_{batch_todo}.jsonl")
+        file_name = os.path.join(path_out, f"{model}-batch_{batch_todo}.jsonl")
         with open(file_name, "w") as file:
             for obj in tasks:
                 file.write(json.dumps(obj) + "\n")
 
         batch_files.append(init_dict["client"].files.create(file=open(file_name, "rb"), purpose="batch"))
 
-        # elements in list_of_batch[i] are indices for list_sentences, corresponding to "sentences2rate-CGPT.txt"
-        batch_dict = {"batch_files": batch_files, "list_of_batch": list_of_batch, "list_sentences": list_sentences}
+    print(f"Current batch num_tokens={num_tokens:,}")
+    # elements in list_of_batch[i] are indices for list_sentences, corresponding to "sentences2rate-CGPT.txt"
+    batch_dict = {"batch_files": batch_files, "list_of_batch": list_of_batch, "list_sentences": list_sentences}
+    savePKL(path_out, f"{model}-batch_dict", batch_dict)
 
-        with open(os.path.join(path_out, "batch_dict.pkl"), "wb") as f:
-            pickle.dump(batch_dict, f)
-
-        return batch_dict
+    return batch_dict
 
 
-def creat_batch_jobs(api_key, model, dir_sent, dir_batch, batch_size=49999):
-    init_dict = CGPT_init(api_key)
+def creat_batch_jobs(init_dict, model, dir_sent, dir_batch, batch_size=49999, fname=None, batch_num=None):
     # Save jsonl files and batch_dict to /batch.
-    batch_dict = make_batches(init_dict, model, dir_sent, dir_batch, batch_size)
+    batch_dict = make_batches(init_dict, model, dir_sent, dir_batch, batch_size, fname, batch_num)
     for x in batch_dict["batch_files"]:
         init_dict["client"].batches.create(input_file_id=x.id, endpoint="/v1/chat/completions", completion_window="24h")
     print(f'{len(batch_dict["batch_files"])} batches created.')
 
 
-def process_batch_outputs(dir_in, dir_out):
+def _save_batch_files_dict(path_out, model, batch_files, key):
+    # batch_files is list of input meta objects.
+    fname = f"{model}-batch_files_dict"
+    try:
+        batch_files_dict = loadPKL(path_out, fname)
+    except:
+        batch_files_dict = dict()
+    batch_files_dict[key] = batch_files
+    savePKL(path_out, fname, batch_files_dict)
+
+
+def _save_batches_dict(path_out, model, batches, key):
+    # batches is list of batch meta objects.
+    fname = f"{model}-batches_dict"
+    try:
+        batches_dict = loadPKL(path_out, fname)
+    except:
+        batches_dict = dict()
+    batches_dict[key] = batches
+    savePKL(path_out, fname, batches_dict)
+
+
+def download_batch_output(api_key, batches_dict, path_out, verbose=False):
+    client = openai.OpenAI(api_key=api_key)
+    coun = 0
+    for k, vv in batches_dict.items():
+        for v in vv:
+            b = client.batches.retrieve(v.id)
+            output_file_id = b.output_file_id
+            if output_file_id is None:
+                print(f"NOTE: Can't download output file because no output_file_id yet, batch meta in question:\n{v}")
+                continue
+            file_content = client.files.content(output_file_id).content
+            time.sleep(0.05)
+            with open(os.path.join(path_out, f"{v.id}_output.jsonl"), "wb") as f:
+                f.write(file_content)
+            coun += 1
+        if verbose:
+            print(f"{k}:\ndownloaded {coun}/{len(vv)} batch output files.")
+
+
+def make_batches_fc(
+    init_dict, model, path_in, path_out, batch_size, fname=None, batch_num=None, bench=False, token_output=None, subbatch=None
+):
+    """Uses functional_call feature.
+    Args:
+        batch_size (int): Num of requests in a batch. Max is 50K.
+        fname (str): txt file, each line is text that will be added to each request.
+        batch_num (int): If specified, and batch_size < total num of lines in fname, then we only send the batch indexed by this value, instead of doing all batches; this is due to batch token limit.
+        bench (bool): the functino call is different for benchwork measure.
+        token_output (int): In token estimation, how much we want to add output token to each request.
+        subbatch (int): subbatch < batch_size; this is the subbatch batch size for each batch. If this is not None, the actual batches will be the smaller ones as opposed to the larger one to alleviate large batch straggler requests hold (as in the progress getting stuck at 99% done or smth like that).
+    """
+    if token_output is None:  # Estimated output token to add to total token count.
+        token_output = 0
+    if subbatch is not None:
+        # The code would run just fine if subbatch >= batch_size, but at that point it's practically identical to setting subbatch=None.
+        assert subbatch < batch_size, f"subbatch ({subbatch}) >= batch_size ({batch_size}), make sure it's smaller instead."
+    functs = make_functions_bench() if bench else make_functions()
+    batch_files = []
+    list_todo = []
+    list_sentences = []
+    num_tokens = 0
+    if fname is None:
+        fname = "sentences2rate-CGPT"
+    with open(os.path.join(path_in, f"{fname}.txt"), mode="r", encoding="UTF-8") as f:
+        for index, line in enumerate(f):
+            list_todo.append(index)
+            list_sentences.append(line.strip())
+
+    list_of_batch = []
+    while True:
+        if (len(list_of_batch) + 1) * batch_size < len(list_todo):
+            list_of_batch.append(list_todo[len(list_of_batch) * batch_size : (len(list_of_batch) + 1) * batch_size])
+        else:
+            list_of_batch.append(list_todo[len(list_of_batch) * batch_size :])
+            break
+
+    for batch_todo in range(len(list_of_batch)):
+        # DEBUG, temp set one batch to do.
+        if batch_num is not None and batch_todo != batch_num:  # If specified as an int, only run one of many batches.
+            continue
+        if subbatch is None:  # Only 1 batch per batch_todo.
+            tasks = []
+            for index_sent in list_of_batch[batch_todo]:
+
+                citation_text = list_sentences[index_sent]
+                messages = [{"role": "system", "content": init_dict["system_prompt"]}]
+                messages.append({"role": "user", "content": init_dict["user_prompt"] + citation_text})
+                task = {
+                    "custom_id": f"task-{batch_todo}-{index_sent}",
+                    "method": "POST",
+                    "url": "/v1/chat/completions",
+                    "body": {
+                        "model": model,
+                        "temperature": 0,  # Changed from 0.01 to 0 to ensure consistency across identical runs.
+                        # "max_completion_tokens": 50, # Default reply max is context window - len(prompt).
+                        "messages": messages,
+                        "functions": functs,
+                        "function_call": {"name": functs[0]["name"]},
+                    },
+                }
+                tasks.append(task)
+                num_tokens += get_num_token(messages[0]["content"]) + get_num_token(messages[1]["content"]) + token_output
+
+            file_name = os.path.join(path_out, f"{model}-batch_{batch_todo}.jsonl")
+            with open(file_name, "w") as file:
+                for obj in tasks:
+                    file.write(json.dumps(obj) + "\n")
+
+            batch_files.append(init_dict["client"].files.create(file=open(file_name, "rb"), purpose="batch"))
+        else:
+            n_todo = len(list_of_batch[batch_todo])
+            batch_sub_max = -(-n_todo // subbatch)  # ⌈x⌉=−⌊−x⌋.
+            for batch_sub in range(batch_sub_max):  # Sub-batch loop.
+                tasks = []
+                for coun, index_sent in enumerate(list_of_batch[batch_todo]):
+                    if coun // subbatch != batch_sub:  # Only run sub-batch of the batch.
+                        continue
+                    citation_text = list_sentences[index_sent]
+                    messages = [{"role": "system", "content": init_dict["system_prompt"]}]
+                    messages.append({"role": "user", "content": init_dict["user_prompt"] + citation_text})
+                    task = {
+                        "custom_id": f"task-{batch_todo}-{batch_sub}-{index_sent}",
+                        "method": "POST",
+                        "url": "/v1/chat/completions",
+                        "body": {
+                            "model": model,
+                            "temperature": 0,  # Changed from 0.01 to 0 to ensure consistency across identical runs.
+                            # "max_completion_tokens": 50, # Default reply max is context window - len(prompt).
+                            "messages": messages,
+                            "functions": functs,
+                            "function_call": {"name": functs[0]["name"]},
+                        },
+                    }
+                    tasks.append(task)
+                    num_tokens += get_num_token(messages[0]["content"]) + get_num_token(messages[1]["content"]) + token_output
+
+                file_name = os.path.join(path_out, f"{model}-batch_{batch_todo}-{batch_sub}.jsonl")
+                with open(file_name, "w") as file:
+                    for obj in tasks:
+                        file.write(json.dumps(obj) + "\n")
+
+                batch_files.append(init_dict["client"].files.create(file=open(file_name, "rb"), purpose="batch"))
+
+    _save_batch_files_dict(
+        path_out, model, batch_files, f"batch_size={batch_size}, batch_num={batch_num}, subbatch={subbatch}, fname={fname}, bench={bench}"
+    )
+    print(f"Current batch num_tokens={num_tokens:,}")
+    # elements in list_of_batch[i] are indices for list_sentences, corresponding to "sentences2rate-CGPT.txt"
+
+    return batch_files
+
+
+def creat_batch_jobs_fc(
+    init_dict, model, dir_sent, dir_batch, batch_size=49999, fname=None, batch_num=None, bench=False, token_output=None, subbatch=None
+):
+    # Save jsonl files and batch_files and batches to dir_batch.
+    batch_files = make_batches_fc(init_dict, model, dir_sent, dir_batch, batch_size, fname, batch_num, bench, token_output, subbatch)
+    batches = []
+    for x in batch_files:
+        batches.append(init_dict["client"].batches.create(input_file_id=x.id, endpoint="/v1/chat/completions", completion_window="24h"))
+    _save_batches_dict(
+        dir_batch, model, batches, f"batch_size={batch_size}, batch_num={batch_num}, subbatch={subbatch}, fname={fname}, bench={bench}"
+    )
+    print(f"{len(batch_files)} batches created.")
+
+
+def process_batch_outputs(dir_in, dir_out, i=None, lab=None):
     """
     batch output file names: batch_SOME_IDENTIFIER_STRING_output.jsonl
     "custom_id": f"task-{batch_todo}-{index_sent}"
-        index_sent is row index corresponding to
+        index_sent is row index corresponding to; batch_todo doesn't matter because it's non-hierarchical.
 
     Save (& Return)
     ----
@@ -618,22 +1159,73 @@ def process_batch_outputs(dir_in, dir_out):
         key: row num (same as sentrow2edgeinfo)
         val: rating
     """
-    # Find batch files
+    # Find batch files.
     files = [file for file in os.listdir(dir_in) if file.startswith("batch_") and file.endswith("_output.jsonl")]
-    row2rate = dict()
+    model2row2rate = defaultdict(dict)
     for file in files:
+        model = ""
         with open(os.path.join(dir_in, file), "r") as json_file:
             json_list = list(json_file)
 
         for json_str in json_list:
             result = json.loads(json_str)
             row_id = result["custom_id"].split("-")[-1]
+            model_cur = result["response"]["body"]["model"]
+            if model:
+                assert model == model_cur, f"More than 1 model ({model}, {model_cur}) within jsonl."
+            else:
+                model = model_cur
             ans = result["response"]["body"]["choices"][0]["message"]["content"]
-            row2rate[int(row_id)] = ans
+            model2row2rate[model][int(row_id)] = ans
+    for model in model2row2rate.keys():
+        fname = f"{model}-row2rate"
+        if i is not None:
+            fname += f"-{i}"
+        if lab is not None:
+            fname += f"-{lab}"
+        savePKL(dir_out, fname, model2row2rate[model])
 
-    with open(os.path.join(dir_out, "row2rate.pkl"), "wb") as f:
-        pickle.dump(row2rate, f)
-    return row2rate
+
+def process_batch_outputs_fc(dir_in, dir_out, i=None, lab=None):
+    """
+    "function_call" ver. instead of the usual "content".
+    batch output file names: batch_SOME_IDENTIFIER_STRING_output.jsonl
+    "custom_id": f"task-{batch_todo}-{index_sent}"
+        index_sent is row index corresponding to; batch_todo doesn't matter because it's non-hierarchical.
+
+    Save (& Return)
+    ----
+    - row2rate_reason (dict):
+        key: row num (same as sentrow2edgeinfo)
+        val: [rating, reason]
+    """
+    # Find batch files.
+    files = [file for file in os.listdir(dir_in) if file.startswith("batch_") and file.endswith("_output.jsonl")]
+    model2row2rate = defaultdict(dict)
+    for file in files:
+        model = ""
+        with open(os.path.join(dir_in, file), "r") as json_file:
+            json_list = list(json_file)
+
+        for json_str in json_list:
+            result = json.loads(json_str)
+            row_id = result["custom_id"].split("-")[-1]
+            model_cur = result["response"]["body"]["model"]
+            assert result["response"]["status_code"] == 200, f'status code = {result["response"]["status_code"]} in json:\n{result}'
+            if model:
+                assert model == model_cur, f"More than 1 model ({model}, {model_cur}) within jsonl."
+            else:
+                model = model_cur
+            ans = result["response"]["body"]["choices"][0]["message"]["function_call"]["arguments"]
+            ans = json.loads(ans)
+            model2row2rate[model][int(row_id)] = [ans["code"], ans["why"]]
+    for model in model2row2rate.keys():
+        fname = f"{model}-row2rate_reason"
+        if i is not None:
+            fname += f"-{i}"
+        if lab is not None:
+            fname += f"-{lab}"
+        savePKL(dir_out, fname, model2row2rate[model])
 
 
 def prepare_author_names(dir_dict, dir_out):
@@ -673,3 +1265,111 @@ def save_author_gender(dir_dict, dir_genderAPI):
 
     with open(os.path.join(dir_dict, "last_author2gender_info.pkl"), "wb") as f:
         pickle.dump(last_author2gender_info, f)
+
+
+def save_benchmark_data_from_txt_Athar2011(dir_txt, dir_tmp):  # Sample size: 8736; athar2011sentiment.
+    # Saved dict (PKL): key is citation text, val is sentiment.
+    df = pd.read_csv(
+        os.path.join(dir_txt, "citation_sentiment_corpus.txt"),
+        sep="\t",
+        comment="#",
+        header=None,
+        names=["source", "target", "sentiment", "citation_text"],
+    )
+
+    def nonce(k):
+        if k == "o":  # "objective"
+            return 0
+        elif k == "p":  # "positive"
+            return 1
+        elif k == "n":  # "negative"
+            return -1
+        else:
+            raise Exception(f"{k} is not recognized sentiment.")
+
+    df["sentiment"] = df["sentiment"].apply(nonce)
+    ans = dict()
+    with open(os.path.join(dir_tmp, "Athar2011-CGPT.txt"), mode="w+", encoding="UTF-8") as file_out:
+        for idx, row in df.iterrows():
+            file_out.write(row["citation_text"].replace("\n", " ") + "\n")
+            ans[idx] = row["sentiment"]
+    assert (len(df) == len(ans)) and (len(df) == max(list(ans.keys())) + 1), "Row indexing issue in citation_sentiment_corpus.txt."
+    savePKL(dir_tmp, "Athar2011-ans", ans)
+
+
+def save_benchmark_data_from_txt_Bordignon2024(dir_txt, dir_tmp):  # Sample size: 505 (NEG only); bordignon2024corpus.
+    # Saved dict (PKL): key is citation text, val is sentiment.
+    df = pd.read_csv(os.path.join(dir_txt, "20220206_CORPUS_critical_citations_DATA_PAPER.csv"), header=0)
+    df.reset_index(drop=True, inplace=True)  # Remove index column.
+    ans = dict()
+    with open(os.path.join(dir_tmp, "Bordignon2024-CGPT.txt"), mode="w+", encoding="UTF-8") as file_out:
+        for idx, row in df.iterrows():
+            file_out.write(row["Context"].replace("\n", " ") + "\n")
+            ans[idx] = -1
+    assert (len(df) == len(ans)) and (
+        len(df) == max(list(ans.keys())) + 1
+    ), "Row indexing issue in 20220206_CORPUS_critical_citations_DATA_PAPER.csv."
+    savePKL(dir_tmp, "Bordignon2024-ans", ans)
+
+
+def process_response_2(res, err_count, row=None, verbose=True):
+    # To make it simple and consistent we default all bad responses to "NEUT" (0) as a catch-all.
+    if isinstance(res, str):
+        rate = res.strip().casefold().upper()
+    elif isinstance(res, (float, int)):
+        raise Exception(f"{res} is a num.")
+    else:
+        raise Exception(f"{res} is a {type(res)}")
+    if rate == "CRIT":
+        rate = -1
+    elif rate == "FAVO":
+        rate = 1
+    elif rate == "NEUT":
+        rate = 0
+    else:
+        if verbose and row is None:
+            print(f"\nDEBUG unexpected ChatGPT response:\n{rate}")
+        elif verbose:
+            print(f"\nDEBUG unexpected ChatGPT response (row_idx={row}):\n{rate}")
+        err_count += 1
+        rate = 0
+    return rate, err_count
+
+
+def process_response_bench_1(res, err_count, row=None, verbose=True):
+    # Unlike process_response_2, we don't have a catch-all category (like NEU), thus we will throw bad responses away by assigning values to be None.
+    if isinstance(res, str):
+        rate = res.strip().casefold().upper()
+    elif isinstance(res, (float, int)):
+        raise Exception(f"{res} is a num.")
+    else:
+        raise Exception(f"{res} is a {type(res)}")
+    if rate == "YES":
+        rate = 1
+    elif rate == "NO":
+        rate = 0
+    else:
+        if verbose and row is None:
+            print(f"\nDEBUG unexpected ChatGPT response:\n{rate}")
+        elif verbose:
+            print(f"\nDEBUG unexpected ChatGPT response (row_idx={row}):\n{rate}")
+        err_count += 1
+        rate = None
+    return rate, err_count
+
+
+def process_row2rate(row2rate, verbose=True, fc=True, bench=False):
+    row2rate2 = {row: None for row in row2rate.keys()}
+    err_count = 0
+    err_total = 0
+    for row, rate in row2rate.items():
+        err_total += 1
+        if fc:
+            rate, reason = rate[0], rate[1]
+        if bench:
+            rate, err_count = process_response_bench_1(rate, err_count, row=row, verbose=verbose)
+        else:
+            rate, err_count = process_response_2(rate, err_count, row=row, verbose=verbose)
+        row2rate2[row] = [rate, reason] if fc else rate
+    print(f"Bad response: {err_count}/{err_total} ({err_count/err_total*100:.2f}%)")
+    return row2rate2

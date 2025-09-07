@@ -8,6 +8,8 @@ from tqdm import tqdm
 import networkx as nx
 from pubmed_parser import parse_pubmed_xml
 
+from helper_functions import savePKL
+
 """
     ########################################
         Make lookup dictionaries
@@ -111,27 +113,22 @@ def save_paper_author_dicts(paper2meta, dir_dict):
     paper2author = {p: [d["authors"][i]["name"] for i in range(len(d["authors"]))] for p, d in paper2meta.items()}
     missing_authors = False
     for paper, aus in paper2author.items():
-        if not aus: # Empty list is faulty in Python.
+        if not aus:  # Empty list is faulty in Python.
             print(f"Warning: paper PMC={paper} authors not found.")
             missing_authors = True
     assert not missing_authors, "paper2author has some papers that we couldn't find authors, (ideally) need authors to proceed."
     paper2author_s = {p: set(aus) for p, aus in paper2author.items()}
     paper2last_author = {p: aus[-1] for p, aus in paper2author.items()}
     paper2first_author = {p: aus[0] for p, aus in paper2author.items()}
-    with open(os.path.join(dir_dict, "paper2author.pkl"), "wb") as f:
-        pickle.dump(paper2author, f)
-    with open(os.path.join(dir_dict, "paper2author_s.pkl"), "wb") as f:
-        pickle.dump(paper2author_s, f)
-    with open(os.path.join(dir_dict, "paper2last_author.pkl"), "wb") as f:
-        pickle.dump(paper2last_author, f)
-    with open(os.path.join(dir_dict, "paper2first_author.pkl"), "wb") as f:
-        pickle.dump(paper2first_author, f)
+    savePKL(dir_dict, "paper2author", paper2author)
+    savePKL(dir_dict, "paper2author_s", paper2author_s)
+    savePKL(dir_dict, "paper2last_author", paper2last_author)
+    savePKL(dir_dict, "paper2first_author", paper2first_author)
 
 
 def save_paper_time_dicts(paper2meta, dir_dict):
     paper2year = {p: m["jyf"][1] for p, m in paper2meta.items()}
-    with open(os.path.join(dir_dict, "paper2year.pkl"), "wb") as f:
-        pickle.dump(paper2year, f)
+    savePKL(dir_dict, "paper2year", paper2year)
 
 
 def save_aff_dicts(paper2meta, dir_dict):
